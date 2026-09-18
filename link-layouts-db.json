@@ -1,0 +1,27 @@
+{
+  "boards": [
+    {
+      "id": "b1789715701254868",
+      "name": "Layout 1",
+      "layoutMode": "standard",
+      "slots": [
+        {
+          "label": "Attrition Month",
+          "url": "http://tepisql05:9281/Attrition/AttritionMonthly"
+        },
+        {
+          "label": "Shot Count Monthly",
+          "url": "http://tepisql05:9281/ShotCount/ShotCountMonthly"
+        },
+        {
+          "label": "Downtime Monitoring",
+          "url": "http://tepisql05:9281/Downtime/DowntimeMonitoring"
+        },
+        {
+          "label": "Mounter Chart",
+          "url": "http://tepisql05:11620/MounterChart.aspx"
+        }
+      ]
+    }
+  ]
+}

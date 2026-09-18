@@ -24,6 +24,13 @@
   let needsReconnect = false;
   let writeQueue = Promise.resolve();
 
+  // Tracks the currently-mounted board grid so a single slot can be
+  // refreshed in place (without rebuilding every cell / reloading every
+  // iframe) whenever just one link changes.
+  let activeGrid = null;
+  let activeBoardId = null;
+  let activeCellEls = [];
+
   const topbarEl = document.getElementById('topbar');
   const contentEl = document.getElementById('content');
 
@@ -497,7 +504,11 @@
         persistLocal();
       }
 
-      render();
+      if (state.currentBoardId === board.id) {
+        refreshCell(board, index);
+      } else {
+        render();
+      }
     },
   };
 
@@ -956,93 +967,122 @@
     exitGraphOnlyBtn.addEventListener('click', toggleGraphOnly);
     grid.appendChild(exitGraphOnlyBtn);
 
-    const cellEls = [];
+    activeGrid = grid;
+    activeBoardId = board.id;
+    activeCellEls = [];
 
     board.slots.forEach((slot, index) => {
-      const cell = document.createElement('div');
-      cell.className = 'cell' + (slot ? ' filled' : '') + (expandedByBoard[board.id] === index ? ' expanded' : '');
-      cellEls.push(cell);
-
-      const topbar = document.createElement('div');
-      topbar.className = 'cell-topbar';
-
-      if (slot) {
-        const label = document.createElement('div');
-        label.className = 'slot-label';
-        label.textContent = slot.label || domainOf(slot.url);
-        topbar.appendChild(label);
-
-        const expandBtn = document.createElement('button');
-        expandBtn.className = 'expand-btn';
-        expandBtn.textContent = '↗';
-        expandBtn.setAttribute('aria-label', 'Expand slot ' + (index + 1));
-        expandBtn.addEventListener('click', (event) => {
-          event.stopPropagation();
-          toggleExpand(board, cellEls, index);
-        });
-        topbar.appendChild(expandBtn);
-      } else {
-        const indexLabel = document.createElement('div');
-        indexLabel.className = 'slot-index';
-        indexLabel.textContent = 'SLOT ' + (index + 1);
-        topbar.appendChild(indexLabel);
-      }
-
-      cell.appendChild(topbar);
-
-      if (slot) {
-        cell.addEventListener('click', (event) => {
-          if (event.target.closest('.cell-topbar') && !event.target.closest('button')) {
-            openSettings(board, index);
-          }
-        });
-      }
-
-      const viewport = document.createElement('div');
-      viewport.className = 'cell-viewport';
-
-      if (slot) {
-        const frame = document.createElement('iframe');
-        frame.className = 'live-frame fixed-monitor-frame';
-        frame.src = slot.url;
-        frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');
-        frame.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
-        frame.setAttribute('loading', 'lazy');
-        viewport.appendChild(frame);
-
-        const resizeMonitor = () => fitMonitorFrame(viewport, frame);
-        resizeMonitor();
-        frame.addEventListener('load', () => {
-          setEmbeddedChromeHidden(frame, expandedByBoard[board.id] !== index);
-          resizeMonitor();
-        });
-        if (typeof ResizeObserver !== 'undefined') {
-          const observer = new ResizeObserver(resizeMonitor);
-          observer.observe(viewport);
-        }
-
-        const collapseBtn = document.createElement('button');
-        collapseBtn.className = 'collapse-btn';
-        collapseBtn.innerHTML = '✕';
-        collapseBtn.setAttribute('aria-label', 'Collapse back to layout');
-        collapseBtn.addEventListener('click', (event) => {
-          event.stopPropagation();
-          toggleExpand(board, cellEls, index);
-        });
-        viewport.appendChild(collapseBtn);
-      } else {
-        const empty = document.createElement('div');
-        empty.className = 'empty-state';
-        empty.innerHTML = '<div class="empty-plus">+</div><div class="empty-label">Add a link</div>';
-        empty.addEventListener('click', () => openSettings(board, index));
-        viewport.appendChild(empty);
-      }
-
-      cell.appendChild(viewport);
+      const cell = buildCell(board, index);
+      activeCellEls.push(cell);
       grid.appendChild(cell);
     });
 
     contentEl.appendChild(grid);
+  }
+
+  function buildCell(board, index) {
+    const slot = board.slots[index];
+
+    const cell = document.createElement('div');
+    cell.className = 'cell' + (slot ? ' filled' : '') + (expandedByBoard[board.id] === index ? ' expanded' : '');
+
+    const topbar = document.createElement('div');
+    topbar.className = 'cell-topbar';
+
+    if (slot) {
+      const label = document.createElement('div');
+      label.className = 'slot-label';
+      label.textContent = slot.label || domainOf(slot.url);
+      topbar.appendChild(label);
+
+      const expandBtn = document.createElement('button');
+      expandBtn.className = 'expand-btn';
+      expandBtn.textContent = '↗';
+      expandBtn.setAttribute('aria-label', 'Expand slot ' + (index + 1));
+      expandBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleExpand(board, index);
+      });
+      topbar.appendChild(expandBtn);
+    } else {
+      const indexLabel = document.createElement('div');
+      indexLabel.className = 'slot-index';
+      indexLabel.textContent = 'SLOT ' + (index + 1);
+      topbar.appendChild(indexLabel);
+    }
+
+    cell.appendChild(topbar);
+
+    if (slot) {
+      cell.addEventListener('click', (event) => {
+        if (event.target.closest('.cell-topbar') && !event.target.closest('button')) {
+          openSettings(board, index);
+        }
+      });
+    }
+
+    const viewport = document.createElement('div');
+    viewport.className = 'cell-viewport';
+
+    if (slot) {
+      const frame = document.createElement('iframe');
+      frame.className = 'live-frame fixed-monitor-frame';
+      frame.src = slot.url;
+      frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');
+      frame.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+      frame.setAttribute('loading', 'lazy');
+      viewport.appendChild(frame);
+
+      const resizeMonitor = () => fitMonitorFrame(viewport, frame);
+      resizeMonitor();
+      frame.addEventListener('load', () => {
+        setEmbeddedChromeHidden(frame, expandedByBoard[board.id] !== index);
+        resizeMonitor();
+      });
+      if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(resizeMonitor);
+        observer.observe(viewport);
+      }
+
+      const collapseBtn = document.createElement('button');
+      collapseBtn.className = 'collapse-btn';
+      collapseBtn.innerHTML = '✕';
+      collapseBtn.setAttribute('aria-label', 'Collapse back to layout');
+      collapseBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleExpand(board, index);
+      });
+      viewport.appendChild(collapseBtn);
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.innerHTML = '<div class="empty-plus">+</div><div class="empty-label">Add a link</div>';
+      empty.addEventListener('click', () => openSettings(board, index));
+      viewport.appendChild(empty);
+    }
+
+    cell.appendChild(viewport);
+    return cell;
+  }
+
+  // Rebuilds just one cell (used when a single link is added/edited) so the
+  // other slots' iframes are left untouched and don't reload.
+  function refreshCell(board, index) {
+    if (activeBoardId !== board.id || !activeGrid) {
+      render();
+      return;
+    }
+
+    const newCell = buildCell(board, index);
+    const oldCell = activeCellEls[index];
+
+    if (oldCell && oldCell.parentNode === activeGrid) {
+      activeGrid.replaceChild(newCell, oldCell);
+    } else {
+      activeGrid.appendChild(newCell);
+    }
+
+    activeCellEls[index] = newCell;
   }
 
   function openGridSettings(board) {
@@ -1136,13 +1176,14 @@
     }
   }
 
-  function toggleExpand(board, cellEls, index) {
+  function toggleExpand(board, index) {
     const current = expandedByBoard[board.id];
     const next = current === index ? null : index;
     expandedByBoard[board.id] = next;
     topbarEl.classList.toggle('is-visible', next !== null);
 
-    cellEls.forEach((cell, cellIndex) => {
+    activeCellEls.forEach((cell, cellIndex) => {
+      if (!cell) return;
       cell.classList.toggle('expanded', cellIndex === next);
       const frame = cell.querySelector('.live-frame');
       if (frame) setEmbeddedChromeHidden(frame, next !== cellIndex);

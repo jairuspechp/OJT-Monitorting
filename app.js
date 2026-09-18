@@ -2,17 +2,27 @@
   const NAV_KEY = 'link-grid-nav-v1';
   const LOCAL_KEY = 'link-grid-app-v2';
 
+  const FS_SUPPORTED = typeof window.showOpenFilePicker === 'function' && typeof window.showSaveFilePicker === 'function';
+  const HANDLE_DB_NAME = 'link-layouts-handles';
+  const HANDLE_STORE = 'handles';
+  const HANDLE_KEY = 'dbFile';
+
   const state = {
     boards: [],
     currentBoardId: null,
     loaded: false,
   };
 
-  let storageMode = 'local';
+  let storageMode = 'local'; // 'file' | 'db' | 'local'
   let dbApi = null;
   let boardsCol = null;
   let creatingDefault = false;
   let expandedByBoard = {};
+
+  let fileHandle = null;
+  let fileConnected = false;
+  let needsReconnect = false;
+  let writeQueue = Promise.resolve();
 
   const topbarEl = document.getElementById('topbar');
   const contentEl = document.getElementById('content');
@@ -56,6 +66,11 @@
     return state.boards.find((board) => board.id === id) || null;
   }
 
+  // ----------------------------------------------------------------------
+  // Browser-storage (localStorage) persistence — used when no database
+  // file is connected, and as the very first fallback.
+  // ----------------------------------------------------------------------
+
   function persistLocal() {
     try {
       localStorage.setItem(LOCAL_KEY, JSON.stringify({ boards: state.boards }));
@@ -85,6 +100,10 @@
     persistLocal();
     render();
   }
+
+  // ----------------------------------------------------------------------
+  // Optional external database hook (window.claude.use('db')), unchanged.
+  // ----------------------------------------------------------------------
 
   function dbInit() {
     boardsCol = dbApi.collection('boards');
@@ -119,8 +138,225 @@
     );
   }
 
-  function initStorage() {
+  // ----------------------------------------------------------------------
+  // Local database FILE persistence (File System Access API).
+  // This writes your boards to a real .json file on disk, in a folder you
+  // pick, so the data survives clearing Chrome's browsing data — it isn't
+  // stored inside the browser at all.
+  // ----------------------------------------------------------------------
+
+  function openHandleDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(HANDLE_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(HANDLE_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function saveHandleToIdb(handle) {
+    try {
+      const db = await openHandleDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(HANDLE_STORE, 'readwrite');
+        tx.objectStore(HANDLE_STORE).put(handle, HANDLE_KEY);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (error) {
+      // Ignore — worst case, the user just has to reconnect the file next time.
+    }
+  }
+
+  async function loadHandleFromIdb() {
+    try {
+      const db = await openHandleDb();
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(HANDLE_STORE, 'readonly');
+        const req = tx.objectStore(HANDLE_STORE).get(HANDLE_KEY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async function clearHandleFromIdb() {
+    try {
+      const db = await openHandleDb();
+      const tx = db.transaction(HANDLE_STORE, 'readwrite');
+      tx.objectStore(HANDLE_STORE).delete(HANDLE_KEY);
+    } catch (error) {
+      // Ignore.
+    }
+  }
+
+  async function verifyPermission(handle, forWrite) {
+    const opts = forWrite ? { mode: 'readwrite' } : {};
+    if ((await handle.queryPermission(opts)) === 'granted') return true;
+    if ((await handle.requestPermission(opts)) === 'granted') return true;
+    return false;
+  }
+
+  async function readBoardsFromFile(handle) {
+    const file = await handle.getFile();
+    const text = await file.text();
+    if (!text.trim()) return { boards: [] };
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      return { boards: [] };
+    }
+  }
+
+  async function writeBoardsToFile(handle, data) {
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify(data, null, 2));
+    await writable.close();
+  }
+
+  function persistFile() {
+    if (!fileHandle) return Promise.resolve();
+    writeQueue = writeQueue
+      .then(() => writeBoardsToFile(fileHandle, { boards: state.boards }))
+      .catch((error) => {
+        console.warn('Link Layouts: failed to write database file.', error);
+      });
+    return writeQueue;
+  }
+
+  async function fileInit() {
+    try {
+      const data = await readBoardsFromFile(fileHandle);
+      state.boards = Array.isArray(data.boards) ? data.boards : [];
+    } catch (error) {
+      console.warn('Link Layouts: could not read database file, starting fresh.', error);
+      state.boards = [];
+    }
+
+    if (!state.boards.length) {
+      state.boards.push(blankBoard('Layout 1'));
+    }
+
+    state.boards.forEach((board) => {
+      if (!board.id) board.id = makeLocalId();
+    });
+
+    state.loaded = true;
+    await persistFile();
+    render();
+  }
+
+  async function connectDatabaseFile(mode) {
+    if (!FS_SUPPORTED) {
+      window.alert('Saving to a local file needs a recent desktop Chrome or Edge browser.');
+      return;
+    }
+
+    try {
+      let handle;
+
+      if (mode === 'open') {
+        const handles = await window.showOpenFilePicker({
+          types: [{ description: 'Link Layouts database', accept: { 'application/json': ['.json'] } }],
+          multiple: false,
+        });
+        handle = handles[0];
+      } else {
+        handle = await window.showSaveFilePicker({
+          suggestedName: 'link-layouts-db.json',
+          types: [{ description: 'Link Layouts database', accept: { 'application/json': ['.json'] } }],
+        });
+      }
+
+      const granted = await verifyPermission(handle, true);
+      if (!granted) {
+        window.alert('Permission to read and write that file was not granted.');
+        return;
+      }
+
+      fileHandle = handle;
+      fileConnected = true;
+      needsReconnect = false;
+      storageMode = 'file';
+      await saveHandleToIdb(handle);
+
+      if (mode === 'open') {
+        await fileInit();
+        return;
+      }
+
+      // New file: seed it with whatever boards are currently loaded.
+      await writeBoardsToFile(handle, { boards: state.boards });
+      render();
+    } catch (error) {
+      if (error && error.name === 'AbortError') return;
+      console.warn('Link Layouts: could not connect database file.', error);
+      window.alert('Could not connect that file. Please try again.');
+    }
+  }
+
+  async function reconnectDatabaseFile() {
+    if (!fileHandle) return;
+    const granted = await verifyPermission(fileHandle, true).catch(() => false);
+    if (!granted) {
+      window.alert('Permission was not granted, so the database file is still disconnected.');
+      return;
+    }
+    fileConnected = true;
+    needsReconnect = false;
+    storageMode = 'file';
+    await fileInit();
+  }
+
+  function disconnectDatabaseFile() {
+    fileHandle = null;
+    fileConnected = false;
+    needsReconnect = false;
+    clearHandleFromIdb();
+    storageMode = 'local';
+    localInit();
+  }
+
+  // ----------------------------------------------------------------------
+  // Storage bootstrap: prefer a previously-connected database file, then
+  // the optional external db hook, then plain browser storage.
+  // ----------------------------------------------------------------------
+
+  async function initStorage() {
     readNav();
+
+    if (FS_SUPPORTED) {
+      try {
+        const savedHandle = await loadHandleFromIdb();
+        if (savedHandle) {
+          const granted = await savedHandle
+            .queryPermission({ mode: 'readwrite' })
+            .then((p) => p === 'granted')
+            .catch(() => false);
+
+          fileHandle = savedHandle;
+
+          if (granted) {
+            fileConnected = true;
+            storageMode = 'file';
+            await fileInit();
+            return;
+          }
+
+          // A file was connected before, but the browser needs the user to
+          // re-grant permission (this is normal after a restart / clearing
+          // some site data). Fall through to local storage for now; the
+          // home screen will show a "Reconnect" button.
+          needsReconnect = true;
+        }
+      } catch (error) {
+        // Ignore and fall through to other storage modes.
+      }
+    }
 
     const canUseDb = typeof window.claude !== 'undefined' && typeof window.claude.use === 'function';
     if (!canUseDb) {
@@ -167,7 +403,13 @@
 
       const board = blankBoard(name, slotCount, layoutMode);
       state.boards.push(board);
-      persistLocal();
+
+      if (storageMode === 'file') {
+        persistFile();
+      } else {
+        persistLocal();
+      }
+
       render();
       return Promise.resolve(board.id);
     },
@@ -181,7 +423,12 @@
       }
 
       board.name = name;
-      persistLocal();
+
+      if (storageMode === 'file') {
+        persistFile();
+      } else {
+        persistLocal();
+      }
     },
 
     deleteBoard(board) {
@@ -196,7 +443,12 @@
       if (!state.boards.length) {
         state.boards.push(blankBoard('Layout 1'));
       }
-      persistLocal();
+
+      if (storageMode === 'file') {
+        persistFile();
+      } else {
+        persistLocal();
+      }
     },
 
     resizeBoard(board, slotCount, layoutMode) {
@@ -216,7 +468,13 @@
       board.slots = newSlots;
       board.layoutMode = layoutMode;
       expandedByBoard[board.id] = null;
-      persistLocal();
+
+      if (storageMode === 'file') {
+        persistFile();
+      } else {
+        persistLocal();
+      }
+
       render();
     },
 
@@ -232,7 +490,13 @@
       }
 
       board.slots = newSlots;
-      persistLocal();
+
+      if (storageMode === 'file') {
+        persistFile();
+      } else {
+        persistLocal();
+      }
+
       render();
     },
   };
@@ -387,6 +651,90 @@
     title.className = 'title';
     title.innerHTML = '<b>Link Layouts</b>&nbsp;· ' + state.boards.length + (state.boards.length === 1 ? ' layout' : ' layouts');
     topbarEl.appendChild(title);
+
+    const spacer = document.createElement('div');
+    spacer.className = 'topbar-spacer';
+    topbarEl.appendChild(spacer);
+
+    if (FS_SUPPORTED) {
+      if (needsReconnect) {
+        const reconnectBtn = document.createElement('button');
+        reconnectBtn.type = 'button';
+        reconnectBtn.className = 'db-status-btn db-status-warn';
+        reconnectBtn.textContent = '⚠ Reconnect database file';
+        reconnectBtn.title = 'Click to re-grant access to your saved database file';
+        reconnectBtn.addEventListener('click', reconnectDatabaseFile);
+        topbarEl.appendChild(reconnectBtn);
+      } else if (fileConnected) {
+        const status = document.createElement('button');
+        status.type = 'button';
+        status.className = 'db-status-btn db-status-ok';
+        status.textContent = '🟢 Database file connected';
+        status.title = 'Click to stop syncing to this file and use browser storage instead';
+        status.addEventListener('click', () => {
+          if (window.confirm('Stop syncing to your database file and switch back to browser storage?')) {
+            disconnectDatabaseFile();
+          }
+        });
+        topbarEl.appendChild(status);
+      } else {
+        const connectBtn = document.createElement('button');
+        connectBtn.type = 'button';
+        connectBtn.className = 'db-status-btn';
+        connectBtn.textContent = '📁 Save to a database file';
+        connectBtn.title = 'Store your layouts in a .json file on disk so they survive clearing Chrome';
+        connectBtn.addEventListener('click', openConnectDatabaseDialog);
+        topbarEl.appendChild(connectBtn);
+      }
+    }
+  }
+
+  function openConnectDatabaseDialog() {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'settings-backdrop';
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) close();
+    });
+
+    const modal = document.createElement('div');
+    modal.className = 'settings-modal';
+
+    const heading = document.createElement('h3');
+    heading.textContent = 'Save to a database file';
+    modal.appendChild(heading);
+
+    const hint = document.createElement('div');
+    hint.className = 'settings-hint';
+    hint.textContent = 'Your layouts will be saved to a .json file on your computer, in a folder you choose, so they stick around even if you clear Chrome.';
+    modal.appendChild(hint);
+
+    const row = document.createElement('div');
+    row.className = 'settings-row-buttons';
+
+    const openBtn = document.createElement('button');
+    openBtn.textContent = 'Open existing file';
+    openBtn.addEventListener('click', () => {
+      close();
+      connectDatabaseFile('open');
+    });
+    row.appendChild(openBtn);
+
+    const createBtn = document.createElement('button');
+    createBtn.className = 'save';
+    createBtn.textContent = 'Create new file';
+    createBtn.addEventListener('click', () => {
+      close();
+      connectDatabaseFile('create');
+    });
+    row.appendChild(createBtn);
+
+    modal.appendChild(row);
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+
+    function close() {
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+    }
   }
 
   function renderHomeContent() {

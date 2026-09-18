@@ -340,12 +340,12 @@
       try {
         const savedHandle = await loadHandleFromIdb();
         if (savedHandle) {
+          fileHandle = savedHandle;
+
           const granted = await savedHandle
             .queryPermission({ mode: 'readwrite' })
             .then((p) => p === 'granted')
             .catch(() => false);
-
-          fileHandle = savedHandle;
 
           if (granted) {
             fileConnected = true;
@@ -354,11 +354,14 @@
             return;
           }
 
-          // A file was connected before, but the browser needs the user to
-          // re-grant permission (this is normal after a restart / clearing
-          // some site data). Fall through to local storage for now; the
-          // home screen will show a "Reconnect" button.
+          // A database file was connected before, but the browser dropped
+          // permission (this happens on every fresh page load/relaunch
+          // unless the page is running as an installed app). Stop here and
+          // ask the user to reconnect rather than silently falling back to
+          // a blank local board — the real data is safe in the file.
           needsReconnect = true;
+          renderReconnectScreen();
+          return;
         }
       } catch (error) {
         // Ignore and fall through to other storage modes.
@@ -389,6 +392,55 @@
         storageMode = 'local';
         localInit();
       });
+  }
+
+  function renderReconnectScreen() {
+    topbarEl.innerHTML = '';
+    topbarEl.classList.remove('board-toolbar', 'is-visible');
+
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.innerHTML = '<b>Link Layouts</b>';
+    topbarEl.appendChild(title);
+
+    contentEl.className = 'content mode-home';
+    contentEl.innerHTML = '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'reconnect-screen';
+
+    const heading = document.createElement('div');
+    heading.className = 'reconnect-heading';
+    heading.textContent = 'Reconnect your database file';
+    wrap.appendChild(heading);
+
+    const desc = document.createElement('div');
+    desc.className = 'reconnect-desc';
+    desc.textContent = "Your layouts haven't been lost — they're still saved in your database file. Chrome just needs permission again to read and write it after a reload.";
+    wrap.appendChild(desc);
+
+    const reconnectBtn = document.createElement('button');
+    reconnectBtn.type = 'button';
+    reconnectBtn.className = 'reconnect-btn';
+    reconnectBtn.textContent = '🔓 Reconnect database file';
+    reconnectBtn.addEventListener('click', reconnectDatabaseFile);
+    wrap.appendChild(reconnectBtn);
+
+    const useLocalBtn = document.createElement('button');
+    useLocalBtn.type = 'button';
+    useLocalBtn.className = 'reconnect-btn secondary';
+    useLocalBtn.textContent = 'Use browser storage instead';
+    useLocalBtn.addEventListener('click', () => {
+      needsReconnect = false;
+      fileHandle = null;
+      fileConnected = false;
+      clearHandleFromIdb();
+      storageMode = 'local';
+      localInit();
+    });
+    wrap.appendChild(useLocalBtn);
+
+    contentEl.appendChild(wrap);
   }
 
   const storage = {

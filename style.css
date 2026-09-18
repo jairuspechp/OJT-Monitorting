@@ -249,6 +249,60 @@ textarea {
   color: #ffe6df;
 }
 
+.reconnect-screen {
+  max-width: 420px;
+  margin: 10vh auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  padding: 32px 28px;
+  background: var(--cell);
+  border: 1.5px solid var(--cell-border-filled);
+  border-radius: var(--radius);
+}
+
+.reconnect-heading {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.reconnect-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.reconnect-btn {
+  width: 100%;
+  padding: 10px 0;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #1a1204;
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.reconnect-btn:hover {
+  filter: brightness(1.05);
+}
+
+.reconnect-btn.secondary {
+  background: transparent;
+  border-color: var(--cell-border-filled);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.reconnect-btn.secondary:hover {
+  color: var(--text);
+  border-color: var(--focus);
+}
+
 .content {
   flex: 1;
   min-height: 0;

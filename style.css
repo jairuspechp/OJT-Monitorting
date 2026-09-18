@@ -163,32 +163,46 @@ textarea {
   flex: 1;
 }
 
-.delete-board-btn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
-  color: rgba(255, 255, 255, 0.78);
-  padding: 5px 11px;
-  font-size: 12px;
+.board-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.toolbar-icon-btn {
+  width: 30px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-.delete-board-btn:hover {
-  background: transparent;
-  border-color: var(--danger);
-  color: var(--danger);
+.toolbar-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.45);
 }
 
-.grid-settings-btn {
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 999px;
-  color: #ffffff;
-  padding: 5px 11px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+.toolbar-divider {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.18);
+  flex-shrink: 0;
+}
+
+.delete-board-btn:hover {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .grid-settings-btn:hover {
@@ -196,21 +210,12 @@ textarea {
   border-color: rgba(255, 255, 255, 0.45);
 }
 
-.fullscreen-btn {
-  width: 30px;
-  height: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #ffffff;
-  font-size: 19px;
-  line-height: 1;
-  padding: 0;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+.fullscreen-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.45);
 }
 
-.fullscreen-btn:hover {
+.graph-only-btn:hover {
   background: rgba(255, 255, 255, 0.22);
   border-color: rgba(255, 255, 255, 0.45);
 }

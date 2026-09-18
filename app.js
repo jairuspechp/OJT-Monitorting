@@ -567,6 +567,16 @@
     }
   }
 
+  function toggleGraphOnly() {
+    const enabled = document.body.classList.toggle('graph-only-mode');
+
+    document.querySelectorAll('.graph-only-btn').forEach((button) => {
+      button.textContent = enabled ? '↩' : '▣';
+      button.setAttribute('aria-label', enabled ? 'Show dashboard controls' : 'Hide dashboard controls');
+      button.title = enabled ? 'Show controls' : 'Graph only';
+    });
+  }
+
   function renderBoardContent(board) {
     contentEl.className = 'content mode-board';
     contentEl.innerHTML = '';
@@ -574,44 +584,6 @@
     if (!(board.id in expandedByBoard)) {
       expandedByBoard[board.id] = null;
     }
-
-    const graphOnlyBtn = document.createElement('button');
-graphOnlyBtn.className = 'graph-only-btn';
-graphOnlyBtn.textContent = 'Graph Only';
-graphOnlyBtn.title = 'Hide dashboard controls';
-
-graphOnlyBtn.addEventListener('click', toggleGraphOnly);
-
-topbarEl.appendChild(graphOnlyBtn);
-
-function toggleGraphOnly() {
-  const enabled = document.body.classList.toggle('graph-only-mode');
-
-  const button = document.querySelector('.graph-only-btn');
-
-  if (button) {
-    button.textContent = enabled ? 'Show Controls' : 'Graph Only';
-    button.title = enabled
-      ? 'Show dashboard controls'
-      : 'Hide dashboard controls';
-  }
-
-  const gridFullscreenBtn =
-  document.createElement('button');
-
-  const exitGraphOnlyBtn =
-  document.createElement('button');
-
-exitGraphOnlyBtn.className = 'exit-graph-only-btn';
-exitGraphOnlyBtn.textContent = 'Show Controls';
-
-exitGraphOnlyBtn.addEventListener('click', () => {
-  document.body.classList.remove('graph-only-mode');
-});
-
-grid.appendChild(exitGraphOnlyBtn);
-
-}
 
     const grid = document.createElement('div');
     grid.className = 'grid-stage';
@@ -626,6 +598,15 @@ grid.appendChild(exitGraphOnlyBtn);
     gridFullscreenBtn.title = 'Enter full screen';
     gridFullscreenBtn.addEventListener('click', toggleFullscreen);
     grid.appendChild(gridFullscreenBtn);
+
+    const exitGraphOnlyBtn = document.createElement('button');
+    exitGraphOnlyBtn.type = 'button';
+    exitGraphOnlyBtn.className = 'exit-graph-only-btn';
+    exitGraphOnlyBtn.textContent = '↩';
+    exitGraphOnlyBtn.setAttribute('aria-label', 'Show dashboard controls');
+    exitGraphOnlyBtn.title = 'Show controls';
+    exitGraphOnlyBtn.addEventListener('click', toggleGraphOnly);
+    grid.appendChild(exitGraphOnlyBtn);
 
     const cellEls = [];
 

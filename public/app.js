@@ -633,10 +633,52 @@
       label.textContent = slot.label || domainOf(slot.url);
       topbar.appendChild(label);
 
+      // Link editor: only visible while the slot is zoomed in (see CSS).
+      const linkEdit = document.createElement('div');
+      linkEdit.className = 'link-edit';
+
+      const linkInput = document.createElement('input');
+      linkInput.className = 'link-edit-input';
+      linkInput.value = slot.url;
+      linkInput.placeholder = 'Paste a new link';
+      linkInput.setAttribute('aria-label', 'Link for slot ' + (index + 1));
+
+      const applyLink = () => {
+        const url = normalizeUrl(linkInput.value);
+        if (!url) {
+          linkInput.value = slot.url;
+          return;
+        }
+        if (url === slot.url) return;
+        storage.saveSlot(board, index, { label: slot.label || '', url });
+      };
+
+      linkInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') applyLink();
+        if (event.key === 'Escape') {
+          linkInput.value = slot.url;
+          linkInput.blur();
+        }
+      });
+      linkEdit.appendChild(linkInput);
+
+      const goBtn = document.createElement('button');
+      goBtn.type = 'button';
+      goBtn.className = 'link-edit-btn';
+      goBtn.textContent = 'Go';
+      goBtn.setAttribute('aria-label', 'Load this link');
+      goBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        applyLink();
+      });
+      linkEdit.appendChild(goBtn);
+      topbar.appendChild(linkEdit);
+
+      const isExpanded = expandedByBoard[board.id] === index;
       const expandBtn = document.createElement('button');
       expandBtn.className = 'expand-btn';
-      expandBtn.textContent = '↗';
-      expandBtn.setAttribute('aria-label', 'Expand slot ' + (index + 1));
+      expandBtn.textContent = isExpanded ? '↓' : '↗';
+      expandBtn.setAttribute('aria-label', (isExpanded ? 'Collapse slot ' : 'Expand slot ') + (index + 1));
       expandBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         toggleExpand(board, index);
@@ -653,7 +695,7 @@
 
     if (slot) {
       cell.addEventListener('click', (event) => {
-        if (event.target.closest('.cell-topbar') && !event.target.closest('button')) {
+        if (event.target.closest('.cell-topbar') && !event.target.closest('button, input, .link-edit')) {
           openSettings(board, index);
         }
       });
@@ -822,7 +864,15 @@
 
     activeCellEls.forEach((cell, cellIndex) => {
       if (!cell) return;
-      cell.classList.toggle('expanded', cellIndex === next);
+      const isExpanded = cellIndex === next;
+      cell.classList.toggle('expanded', isExpanded);
+
+      const expandBtn = cell.querySelector('.expand-btn');
+      if (expandBtn) {
+        expandBtn.textContent = isExpanded ? '↓' : '↗';
+        expandBtn.setAttribute('aria-label', (isExpanded ? 'Collapse slot ' : 'Expand slot ') + (cellIndex + 1));
+      }
+
       const frame = cell.querySelector('.live-frame');
       if (frame) setEmbeddedChromeHidden(frame, next !== cellIndex);
     });

@@ -1,16 +1,4 @@
 # Link Layouts + MySQL
-
-Folder layout:
-
-    link-layouts/
-      server.js        Node.js + Express API, talks to MySQL
-      schema.sql       boards + slots tables
-      package.json
-      public/
-        index.html     <- put your existing HTML here
-        styles.css     <- put your existing CSS here
-        app.js         <- the updated script (no more "database file" feature)
-
 Your index.html needs `<div id="topbar"></div>`, `<div id="content"></div>`
 and `<script src="app.js"></script>` (same as before).
 

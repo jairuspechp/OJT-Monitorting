@@ -863,3 +863,42 @@ body.graph-only-mode .exit-graph-only-btn {
   background: #173c3c;
   color: white;
 }
+
+/* Link editor inside the zoomed-in slot */
+.link-edit {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cell:not(.expanded) .link-edit {
+  display: none;
+}
+
+.link-edit-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--cell-border-filled);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 4px 10px;
+  font-size: 12.5px;
+}
+
+.link-edit-input:focus {
+  outline: none;
+  border-color: var(--focus);
+}
+
+.link-edit-btn {
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #1a1204;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 12px;
+  cursor: pointer;
+}

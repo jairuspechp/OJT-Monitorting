@@ -1,11 +1,34 @@
 {
   "name": "link-layouts",
-  "version": "1.0.0",
-  "description": "Link Layouts dashboard with a MySQL backend",
-  "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "productName": "Link Layouts",
+  "version": "2.1.0",
+  "description": "Link Layouts dashboard with a local SQLite database",
+  "author": "Link Layouts",
+  "main": "main.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "postinstall": "electron-builder install-app-deps",
+    "start": "electron .",
+    "build": "electron-builder --win portable",
+    "build:folder": "electron-builder --win dir",
+    "build:installer": "electron-builder --win nsis"
+  },
   "dependencies": {
-    "express": "^4.19.2",
-    "mysql2": "^3.11.0"
+    "better-sqlite3": "^13.0.3"
+  },
+  "devDependencies": {
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.linklayouts.app",
+    "productName": "Link Layouts",
+    "npmRebuild": false,
+    "files": ["main.js", "preload.js", "db.js", "index.html", "app.js", "style.css", "package.json", "icon.ico"],
+    "asarUnpack": ["**/node_modules/better-sqlite3/**"],
+    "win": { "target": ["portable"], "icon": "RTdbX.ico" },
+    "portable": { "artifactName": "Link-Layouts.exe" }
   }
 }

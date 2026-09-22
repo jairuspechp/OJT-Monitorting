@@ -1,0 +1,9 @@
+node_modules/
+dist/
+
+# SQLite writes these transient files alongside the database while it is
+# open; they are regenerated automatically and should not be committed.
+# db.sqlite itself IS meant to be committed (see README).
+db.sqlite-journal
+db.sqlite-wal
+db.sqlite-shm

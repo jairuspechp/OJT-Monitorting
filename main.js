@@ -4,10 +4,8 @@
 // lets the database travel with the project when you commit and push it to
 // GitHub, so pulling the repo on another machine brings your links with it.
 //
-// Caveat: this only works reliably when running from source (npm start).
-// A packaged/portable .exe usually runs from a temporary extraction
-// folder, so this path would not persist between launches once built —
-// worth revisiting if you ever ship a packaged build to someone else.
+// For packaged/portable .exe builds, the extraction path changes each launch,
+// so we fall back to app.getPath('userData') in that case.
 
 const path = require('path');
 const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
@@ -28,7 +26,12 @@ let readyToClose = false;
 // instead of failing silently and losing what they type.
 function openStore() {
   try {
-    dbFile = path.join(__dirname, 'db.sqlite');
+    const isPackaged = app.isPackaged || !app.getAppPath().startsWith(process.cwd());
+    if (isPackaged) {
+      dbFile = path.join(app.getPath('userData'), 'db.sqlite');
+    } else {
+      dbFile = path.join(__dirname, 'db.sqlite');
+    }
 
     const { openDatabase } = require('./db');
     store = openDatabase(dbFile);
@@ -47,7 +50,7 @@ function registerIpc() {
 
   ipcMain.handle('db:status', () => ({ ok: Boolean(store), file: dbFile, error: dbError }));
 
-  const handlers = ['listBoards', 'createBoard', 'renameBoard', 'deleteBoard', 'setLayout', 'saveSlot', 'clearSlot'];
+  const handlers = ['listBoards', 'createBoard', 'renameBoard', 'deleteBoard', 'setLayout', 'saveSlot', 'clearSlot', 'recordCheck', 'getCheck', 'listChecks', 'deleteChecksForBoard', 'exportData', 'importData'];
   handlers.forEach((name) => {
     ipcMain.handle('db:' + name, (_event, ...args) => {
       if (!store) throw new Error(dbError || 'The database is not available');

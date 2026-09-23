@@ -21,4 +21,10 @@ contextBridge.exposeInMainWorld('linkDB', {
   setLayout: call('setLayout'),
   saveSlot: call('saveSlot'),
   clearSlot: call('clearSlot'),
+  recordCheck: call('recordCheck'),
+  getCheck: call('getCheck'),
+  listChecks: call('listChecks'),
+  deleteChecksForBoard: call('deleteChecksForBoard'),
+  exportData: call('exportData'),
+  importData: call('importData'),
 });

@@ -62,11 +62,9 @@
       id: makeLocalId(),
       name,
       layoutMode: layoutMode || 'standard',
-      // Only ever shown back to the user in the "Create new layout" dialog
-      // itself — a note for their own reference, not displayed on tiles
-      // or in Grid settings.
       description: description || '',
       slots: Array.from({ length: slotCount || 4 }, () => null),
+      refreshInterval: 0,
     };
   }
 
@@ -148,14 +146,15 @@
       }
     },
 
-    resizeBoard(board, slotCount, layoutMode) {
+    resizeBoard(board, slotCount, layoutMode, refreshInterval) {
       const newSlots = board.slots.slice(0, slotCount);
       while (newSlots.length < slotCount) newSlots.push(null);
 
       board.slots = newSlots;
       board.layoutMode = layoutMode;
+      board.refreshInterval = Number.parseInt(refreshInterval || '0', 10) || 0;
       expandedByBoard[board.id] = null;
-      save(() => db.setLayout(board.id, slotCount, layoutMode));
+      save(() => db.setLayout(board.id, slotCount, layoutMode, board.refreshInterval));
 
       render();
     },
@@ -176,6 +175,30 @@
       } else {
         render();
       }
+    },
+
+    async recordCheck(url, boardId, status, error, refreshInterval) {
+      await db.recordCheck(url, boardId, status, error, refreshInterval);
+    },
+
+    async getCheck(url) {
+      return db.getCheck(url);
+    },
+
+    async listChecks() {
+      return db.listChecks();
+    },
+
+    async deleteChecksForBoard(boardId) {
+      await db.deleteChecksForBoard(boardId);
+    },
+
+    async exportData() {
+      return db.exportData();
+    },
+
+    async importData(json) {
+      await db.importData(json);
     },
   };
 
@@ -277,14 +300,20 @@
     return Math.min(4, Math.max(1, Math.ceil(Math.sqrt(board.slots.length))));
   }
 
-  function goHome() {
-    state.currentBoardId = null;
-    writeNav();
-    render();
-  }
-
   function openBoard(id) {
     state.currentBoardId = id;
+    writeNav();
+    render();
+    const board = findBoard(id);
+    if (board && board.refreshInterval > 0) {
+      startHealthChecks(board, board.refreshInterval * 1000);
+      runBoardHealthChecks(board);
+    }
+  }
+
+  function goHome() {
+    stopHealthChecks();
+    state.currentBoardId = null;
     writeNav();
     render();
   }
@@ -349,8 +378,8 @@
 
     const logo = document.createElement('img');
     logo.className = 'brand-icon';
-    logo.src = 'RTdbX.png';
-    logo.alt = 'RTdbX';
+    logo.src = '/img/RTdbX.png';
+    logo.alt = '/img/RTdbX';
 
     brand.appendChild(logo);
     return brand;
@@ -515,6 +544,26 @@
       if (Number.isInteger(currentIndex)) openSettings(board, currentIndex);
     });
 
+    const exportItem = document.createElement('button');
+    exportItem.type = 'button';
+    exportItem.className = 'board-menu-item';
+    exportItem.innerHTML = '<span class="board-menu-item-icon">📤</span><span>Export layouts</span>';
+    exportItem.addEventListener('click', (event) => {
+      event.stopPropagation();
+      closeMenu();
+      openExportDialog(board);
+    });
+
+    const importItem = document.createElement('button');
+    importItem.type = 'button';
+    importItem.className = 'board-menu-item';
+    importItem.innerHTML = '<span class="board-menu-item-icon">📥</span><span>Import layouts</span>';
+    importItem.addEventListener('click', (event) => {
+      event.stopPropagation();
+      closeMenu();
+      openImportDialog(board);
+    });
+
     const returnItem = document.createElement('button');
     returnItem.type = 'button';
     returnItem.className = 'board-menu-item';
@@ -527,6 +576,8 @@
 
     menuPanel.appendChild(settingsItem);
     menuPanel.appendChild(changeLinkItem);
+    menuPanel.appendChild(exportItem);
+    menuPanel.appendChild(importItem);
     menuPanel.appendChild(returnItem);
     menuWrap.appendChild(menuBtn);
     menuWrap.appendChild(menuPanel);
@@ -753,6 +804,11 @@
         topbar.appendChild(label);
       }
 
+      const statusDot = document.createElement('div');
+      statusDot.className = 'slot-status-dot status-unknown';
+      statusDot.title = 'Link status: not checked yet';
+      topbar.appendChild(statusDot);
+
       const isExpanded = expandedByBoard[board.id] === index;
       const expandBtn = document.createElement('button');
       expandBtn.className = 'expand-btn';
@@ -808,6 +864,212 @@
 
   // Rebuilds just one cell (used when a single link is added/edited) so the
   // other slots' iframes are left untouched and don't reload.
+  async function performHealthCheck(url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'HEAD',
+        mode: 'no-cors',
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      await storage.recordCheck(url, state.currentBoardId, 'ok', '', 0);
+      return { status: 'ok', error: '' };
+    } catch (error) {
+      clearTimeout(timeout);
+      await storage.recordCheck(url, state.currentBoardId, 'error', error.message || 'Request failed', 0);
+      return { status: 'error', error: error.message || 'Request failed' };
+    }
+  }
+
+  async function runBoardHealthChecks(board) {
+    const slots = board.slots.filter(Boolean);
+    const checks = slots.map((slot) => performHealthCheck(slot.url));
+
+    try {
+      await Promise.allSettled(checks);
+    } catch (error) {
+      console.error('Link Layouts: health check batch failed.', error);
+    }
+  }
+
+  let healthCheckInterval = null;
+
+  function startHealthChecks(board, intervalMs) {
+    if (healthCheckInterval) {
+      clearInterval(healthCheckInterval);
+      healthCheckInterval = null;
+    }
+
+    if (!board || intervalMs <= 0) return;
+
+    healthCheckInterval = setInterval(() => {
+      if (state.currentBoardId !== board.id) {
+        clearInterval(healthCheckInterval);
+        healthCheckInterval = null;
+        return;
+      }
+      runBoardHealthChecks(board);
+    }, intervalMs);
+  }
+
+  function stopHealthChecks() {
+    if (healthCheckInterval) {
+      clearInterval(healthCheckInterval);
+      healthCheckInterval = null;
+    }
+  }
+
+  async function updateStatusDot(board, index) {
+    const slot = board.slots[index];
+    if (!slot) return;
+
+    const cell = activeCellEls[index];
+    if (!cell) return;
+
+    const dot = cell.querySelector('.slot-status-dot');
+    if (!dot) return;
+
+    const check = await storage.getCheck(slot.url);
+    if (!check) {
+      dot.className = 'slot-status-dot status-unknown';
+      dot.title = 'Link status: not checked yet';
+      return;
+    }
+
+    dot.className = 'slot-status-dot status-' + (check.last_status === 'ok' ? 'ok' : 'err');
+    dot.title = 'Status: ' + check.last_status + (check.last_error ? ' — ' + check.last_error : '') + '\nChecked: ' + new Date(check.last_checked_at).toLocaleString();
+  }
+
+  async function refreshAllStatusDots(board) {
+    board.slots.forEach((_, index) => updateStatusDot(board, index));
+  }
+
+  function openExportDialog(board) {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'settings-backdrop';
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) close();
+    });
+
+    const modal = document.createElement('div');
+    modal.className = 'settings-modal';
+
+    const heading = document.createElement('h3');
+    heading.textContent = 'Export layouts';
+    modal.appendChild(heading);
+
+    const message = document.createElement('div');
+    message.className = 'settings-message';
+    message.textContent = 'Copy the JSON below to save your layouts outside the app.';
+    modal.appendChild(message);
+
+    const textarea = document.createElement('textarea');
+    textarea.readOnly = true;
+    textarea.rows = 10;
+    textarea.addEventListener('focus', () => textarea.select());
+    modal.appendChild(textarea);
+
+    const row = document.createElement('div');
+    row.className = 'settings-row-buttons';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'save';
+    copyBtn.textContent = 'Copy to clipboard';
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(textarea.value);
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy to clipboard'; }, 1200);
+      } catch (error) {
+        textarea.select();
+        document.execCommand('copy');
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy to clipboard'; }, 1200);
+      }
+    });
+    row.appendChild(copyBtn);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', close);
+    row.appendChild(closeBtn);
+
+    modal.appendChild(row);
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+
+    storage.exportData().then((json) => {
+      textarea.value = json;
+    });
+
+    function close() {
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+    }
+  }
+
+  function openImportDialog(board) {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'settings-backdrop';
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) close();
+    });
+
+    const modal = document.createElement('div');
+    modal.className = 'settings-modal';
+
+    const heading = document.createElement('h3');
+    heading.textContent = 'Import layouts';
+    modal.appendChild(heading);
+
+    const message = document.createElement('div');
+    message.className = 'settings-message';
+    message.textContent = 'Paste a previously exported JSON below. This merges with existing layouts.';
+    modal.appendChild(message);
+
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = 'Paste exported JSON here...';
+    textarea.rows = 10;
+    modal.appendChild(textarea);
+
+    const errorEl = document.createElement('div');
+    errorEl.className = 'settings-message';
+    errorEl.style.color = 'var(--danger)';
+    modal.appendChild(errorEl);
+
+    const row = document.createElement('div');
+    row.className = 'settings-row-buttons';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', close);
+    row.appendChild(cancelBtn);
+
+    const importBtn = document.createElement('button');
+    importBtn.className = 'save';
+    importBtn.textContent = 'Import';
+    importBtn.addEventListener('click', async () => {
+      try {
+        await storage.importData(textarea.value);
+        close();
+        render();
+      } catch (error) {
+        errorEl.textContent = error.message || 'Invalid JSON.';
+      }
+    });
+    row.appendChild(importBtn);
+
+    modal.appendChild(row);
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+    textarea.focus();
+
+    function close() {
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+    }
+  }
   function refreshCell(board, index) {
     if (activeBoardId !== board.id || !activeGrid) {
       render();
@@ -886,6 +1148,18 @@
     });
     modal.appendChild(modeSelect);
 
+    const refreshLabel = document.createElement('div');
+    refreshLabel.className = 'settings-field-label';
+    refreshLabel.textContent = 'Auto-refresh interval (seconds, 0 = off)';
+    modal.appendChild(refreshLabel);
+
+    const refreshInput = document.createElement('input');
+    refreshInput.type = 'number';
+    refreshInput.min = '0';
+    refreshInput.max = '3600';
+    refreshInput.value = String(board.refreshInterval || 0);
+    modal.appendChild(refreshInput);
+
     const hint = document.createElement('div');
     hint.className = 'settings-hint';
     hint.textContent = 'Existing links are kept when the grid grows.';
@@ -922,7 +1196,7 @@
         storage.renameBoard(board, newName);
       }
 
-      storage.resizeBoard(board, slotCount, modeSelect.value);
+      storage.resizeBoard(board, slotCount, modeSelect.value, Number.parseInt(refreshInput.value, 10) || 0);
       close();
     });
     row.appendChild(saveBtn);

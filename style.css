@@ -12,8 +12,12 @@
   --nav: #ffffff;
   --link: #2563eb;
   --link-hover: #1d4ed8;
-  --radius: 10px;
+  --radius: 12px;
   --footer-height: 44px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
 :root[data-theme="light"] {
@@ -46,6 +50,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 button,
@@ -87,10 +93,11 @@ textarea {
 .brand {
   display: flex;
   align-items: center;
-  background: #ffffff;
+  background: #f1f5f9;
   border-radius: 8px;
   padding: 3px 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--cell-border);
 }
 
 .brand-icon {
@@ -362,8 +369,9 @@ textarea {
   height: var(--footer-height);
   padding: 0 22px;
   background: var(--cell);
-  border-top: 1px solid var(--cell-border-filled);
+  border-top: 1px solid var(--cell-border);
   font-size: 11px;
+  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04);
 }
 
 .board-footer-left,
@@ -388,7 +396,7 @@ textarea {
 .content.mode-home {
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 28px 28px calc(var(--footer-height) + 28px);
+  padding: 32px 32px calc(var(--footer-height) + 32px);
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -400,9 +408,10 @@ textarea {
 }
 
 .home-intro {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-dim);
-  margin-bottom: 18px;
+  margin-bottom: 20px;
+  font-weight: 500;
 }
 
 .board-list {
@@ -438,18 +447,20 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(2, 1fr);
-  gap: 5px;
+  gap: 4px;
   height: 84px;
 }
 
 .mini-cell {
-  border-radius: 5px;
-  background: var(--panel);
-  border: 1px dashed var(--cell-border-filled);
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--cell-border);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .mini-cell.filled {
   border-style: solid;
+  border-color: var(--cell-border-filled);
 }
 
 .board-tile-footer {
@@ -466,11 +477,13 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  letter-spacing: -0.01em;
 }
 
 .board-meta {
   font-size: 11px;
   color: var(--text-dim);
+  font-weight: 500;
 }
 
 .add-tile {
@@ -479,15 +492,19 @@ textarea {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--text-dim);
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  background: var(--cell);
+  box-shadow: var(--shadow-sm);
 }
 
 .add-tile:hover {
   border-color: var(--focus);
   color: var(--text);
+  background: var(--panel);
+  box-shadow: var(--shadow-md);
 }
 
 .add-tile .plus {
@@ -512,8 +529,8 @@ textarea {
   grid-template-rows: repeat(2, minmax(0, 1fr));
   grid-auto-rows: minmax(0, 1fr);
   align-content: stretch;
-  gap: 10px;
-  padding: 10px;
+  gap: 12px;
+  padding: 12px;
   overflow: hidden;
   contain: layout paint;
 }
@@ -556,7 +573,7 @@ textarea {
 .cell {
   position: relative;
   background: var(--cell);
-  border: 1.5px solid var(--cell-border);
+  border: 1px solid var(--cell-border);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
@@ -564,6 +581,7 @@ textarea {
   min-width: 0;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   isolation: isolate;
+  box-shadow: var(--shadow-sm);
 }
 
 .cell.filled {
@@ -572,13 +590,14 @@ textarea {
 
 .cell:hover {
   border-color: var(--focus);
+  box-shadow: var(--shadow-md);
 }
 
 .cell.expanded {
   position: absolute;
   inset: 0;
   z-index: 10;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-xl), 0 0 0 2px var(--focus);
 }
 
 .cell:not(.expanded) .cell-topbar {
@@ -660,6 +679,7 @@ textarea {
   background: var(--focus);
   border-color: var(--focus);
   color: #ffffff;
+  box-shadow: var(--shadow-md);
 }
 
 .cell-viewport {
@@ -737,13 +757,13 @@ textarea {
   background: var(--panel);
   border: 1px solid var(--cell-border);
   border-radius: var(--radius);
-  padding: 20px;
-  width: 320px;
+  padding: 22px;
+  width: 340px;
   max-width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  gap: 12px;
+  box-shadow: var(--shadow-xl);
 }
 
 .settings-modal h3 {
@@ -758,20 +778,13 @@ textarea {
 .settings-modal select {
   background: var(--bg);
   border: 1px solid var(--cell-border-filled);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--text);
-  padding: 8px 10px;
+  padding: 10px 12px;
   font-size: 13px;
   width: 100%;
   resize: none;
-}
-
-.settings-modal select {
-  appearance: none;
-}
-
-.settings-modal textarea {
-  min-height: 60px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .settings-modal input:focus,
@@ -779,6 +792,7 @@ textarea {
 .settings-modal select:focus {
   outline: none;
   border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 .settings-field-label {
@@ -808,20 +822,34 @@ textarea {
 
 .settings-modal button {
   flex: 1;
-  padding: 8px 0;
-  border-radius: 6px;
+  padding: 10px 0;
+  border-radius: 8px;
   border: 1px solid var(--cell-border-filled);
   background: var(--panel);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-modal button:hover {
+  background: var(--cell);
+  border-color: var(--focus);
+  box-shadow: var(--shadow-md);
 }
 
 .settings-modal button.save {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a1204;
+  color: #ffffff;
   font-weight: 600;
+}
+
+.settings-modal button.save:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
 }
 
 .settings-modal button.remove {
@@ -834,8 +862,13 @@ textarea {
 .settings-modal button.danger {
   background: var(--danger);
   border-color: var(--danger);
-  color: #2a0a04;
+  color: #ffffff;
   font-weight: 600;
+}
+
+.settings-modal button.danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
 }
 
 @media (max-width: 620px) {
@@ -942,21 +975,23 @@ body.graph-only-mode .exit-graph-only-btn {
   width: 38px;
   height: 38px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 8px;
   cursor: pointer;
-  background: rgba(23, 60, 60, 0.18);
-  color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--text);
   font-size: 17px;
   line-height: 1;
-  backdrop-filter: blur(2px);
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-md);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 body.graph-only-mode .exit-graph-only-btn:hover {
-  background: rgba(23, 60, 60, 0.85);
-  color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.4);
+  background: #ffffff;
+  color: var(--text);
+  border-color: var(--focus);
+  box-shadow: var(--shadow-lg);
 }
 
 /* ==================================
@@ -965,20 +1000,28 @@ body.graph-only-mode .exit-graph-only-btn:hover {
 
 .topbar {
   backdrop-filter: blur(12px) saturate(140%);
-  background: rgba(17, 19, 34, 0.92);
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid var(--cell-border-filled);
 }
 
 .board-tile {
-  background:
-    radial-gradient(circle at 30% 20%, rgba(244, 114, 182, 0.08) 0%, transparent 60%),
-    var(--cell);
-  transition: border-color 0.15s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  background: var(--cell);
+  border: 1px solid var(--cell-border);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  position: relative;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
 }
 
 .board-tile:hover {
   border-color: var(--focus);
-  transform: translateY(-2px) scale(1.012);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
 }
 
 .cell {

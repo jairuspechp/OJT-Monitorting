@@ -15,9 +15,6 @@
     "build:folder": "electron-builder --win dir",
     "build:installer": "electron-builder --win nsis"
   },
-  "dependencies": {
-    "better-sqlite3": "^13.0.3"
-  },
   "devDependencies": {
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3"
@@ -26,9 +23,27 @@
     "appId": "com.linklayouts.app",
     "productName": "Link Layouts",
     "npmRebuild": false,
-    "files": ["main.js", "preload.js", "db.js", "index.html", "app.js", "style.css", "package.json", "icon.ico"],
-    "asarUnpack": ["**/node_modules/better-sqlite3/**"],
-    "win": { "target": ["portable"], "icon": "RTdbX.ico" },
-    "portable": { "artifactName": "Link-Layouts.exe" }
+    "files": [
+      "main.js",
+      "preload.js",
+      "db.js",
+      "index.html",
+      "app.js",
+      "style.css",
+      "package.json",
+      "icon.ico"
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "RTdbX.ico"
+    },
+    "portable": {
+      "artifactName": "Link-Layouts.exe"
+    }
   }
 }

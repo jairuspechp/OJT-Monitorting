@@ -16,6 +16,18 @@
   let activeBoardId = null;
   let activeCellEls = [];
 
+  // Tracks the currently-open board-menu flyout (if any) so a single
+  // document-level click listener can close it when the user clicks
+  // elsewhere, without stacking a new listener on every re-render.
+  let activeMenuWrap = null;
+
+  document.addEventListener('click', (event) => {
+    if (activeMenuWrap && !activeMenuWrap.contains(event.target)) {
+      activeMenuWrap.classList.remove('open');
+      activeMenuWrap = null;
+    }
+  });
+
   const topbarEl = document.getElementById('topbar');
   const contentEl = document.getElementById('content');
 
@@ -45,11 +57,15 @@
     return 'b' + Date.now() + Math.floor(Math.random() * 1000);
   }
 
-  function blankBoard(name, slotCount, layoutMode) {
+  function blankBoard(name, slotCount, layoutMode, description) {
     return {
       id: makeLocalId(),
       name,
       layoutMode: layoutMode || 'standard',
+      // Only ever shown back to the user in the "Create new layout" dialog
+      // itself — a note for their own reference, not displayed on tiles
+      // or in Grid settings.
+      description: description || '',
       slots: Array.from({ length: slotCount || 4 }, () => null),
     };
   }
@@ -65,33 +81,13 @@
 
   const db = window.linkDB;
 
-  // If the database can't be opened or a write fails, this becomes visible
-  // in the interface (once) instead of only being logged to devtools, so a
-  // silent storage failure is never mistaken for a save that worked.
-  let warnedOffline = false;
-  function showStorageWarning(message) {
-    if (warnedOffline) return;
-    warnedOffline = true;
-    const banner = document.createElement('div');
-    banner.className = 'storage-warning-banner';
-    banner.textContent = '⚠ Links are NOT being saved to disk: ' + message;
-    Object.assign(banner.style, {
-      position: 'fixed', top: '0', left: '0', right: '0', zIndex: '99999',
-      background: '#5c1a1a', color: '#fff', padding: '10px 16px',
-      fontFamily: 'sans-serif', fontSize: '13px', textAlign: 'center',
-    });
-    document.body.appendChild(banner);
-  }
-
   // The UI is updated first; the write happens right after. A failure is
-  // now surfaced to the user, not just logged, so it never looks like a
-  // save succeeded when it actually didn't reach the database file.
+  // logged to devtools console only (no on-screen banner).
   function save(task) {
     return Promise.resolve()
       .then(task)
       .catch((error) => {
         console.error('Link Layouts: could not save to the database.', error);
-        showStorageWarning(error && error.message ? error.message : String(error));
       });
   }
 
@@ -101,7 +97,7 @@
     try {
       const status = await db.status();
       if (!status || !status.ok) {
-        showStorageWarning((status && status.error) || 'the database file could not be opened');
+        console.error('Link Layouts: database status not ok.', (status && status.error) || 'the database file could not be opened');
       }
 
       state.boards = await db.listBoards();
@@ -113,7 +109,6 @@
       }
     } catch (error) {
       console.error('Link Layouts: could not open the database.', error);
-      showStorageWarning(error && error.message ? error.message : String(error));
       state.boards = [blankBoard('Layout 1')];
     }
 
@@ -122,14 +117,15 @@
   }
 
   const storage = {
-    createBoard(name, slotCount, layoutMode) {
-      const board = blankBoard(name, slotCount, layoutMode);
+    createBoard(name, slotCount, layoutMode, description) {
+      const board = blankBoard(name, slotCount, layoutMode, description);
       state.boards.push(board);
       save(() => db.createBoard({
         id: board.id,
         name: board.name,
         slotCount: board.slots.length,
         layoutMode: board.layoutMode,
+        description: board.description,
       }));
 
       render();
@@ -316,10 +312,7 @@
     topbarEl.innerHTML = '';
     topbarEl.classList.remove('board-toolbar', 'is-visible');
 
-    const title = document.createElement('div');
-    title.className = 'title';
-    title.innerHTML = '<b>Link Layouts</b>';
-    topbarEl.appendChild(title);
+    topbarEl.appendChild(buildBrand());
 
     contentEl.className = 'content mode-home';
     contentEl.innerHTML = '<div class="home-intro">Loading your layouts…</div>';
@@ -329,20 +322,63 @@
     topbarEl.innerHTML = '';
     topbarEl.classList.remove('board-toolbar', 'is-visible');
 
+    topbarEl.appendChild(buildBrand());
+
     const title = document.createElement('div');
     title.className = 'title';
-    title.innerHTML = '<b>Link Layouts</b>&nbsp;· ' + state.boards.length + (state.boards.length === 1 ? ' layout' : ' layouts');
+    title.textContent = '· ' + state.boards.length + (state.boards.length === 1 ? ' layout' : ' layouts');
     topbarEl.appendChild(title);
 
     const spacer = document.createElement('div');
     spacer.className = 'topbar-spacer';
     topbarEl.appendChild(spacer);
 
+    topbarEl.appendChild(buildLiveClock());
+
     const status = document.createElement('div');
     status.className = 'db-status-btn db-status-ok';
-    status.textContent = '💾 Saved on this computer';
-    status.title = 'Your links are stored in a local SQLite file, not in the browser';
+    status.textContent = '💾';
+    status.title = 'Saved on this computer — your links are stored in a local SQLite file, not in the browser';
     topbarEl.appendChild(status);
+  }
+
+  // Logo mark, shared between the home and board toolbars.
+  function buildBrand() {
+    const brand = document.createElement('div');
+    brand.className = 'brand';
+
+    const logo = document.createElement('img');
+    logo.className = 'brand-icon';
+    logo.src = 'RTdbX.png';
+    logo.alt = 'RTdbX';
+
+    brand.appendChild(logo);
+    return brand;
+  }
+
+  function formatClock() {
+    const now = new Date();
+    const date = now.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const time = now.toLocaleTimeString();
+    return date + ' · ' + time;
+  }
+
+  // A clock (with date) that ticks once a second. Every element with this
+  // class gets updated together, so a fresh one keeps working after re-render.
+  function buildLiveClock() {
+    const clock = document.createElement('div');
+    clock.className = 'live-clock';
+    clock.textContent = formatClock();
+    return clock;
+  }
+
+  function startLiveClock() {
+    setInterval(() => {
+      const text = formatClock();
+      document.querySelectorAll('.live-clock').forEach((el) => {
+        el.textContent = text;
+      });
+    }, 1000);
   }
 
   function renderHomeContent() {
@@ -414,6 +450,7 @@
     list.appendChild(addTile);
 
     contentEl.appendChild(list);
+    contentEl.appendChild(buildBoardFooter());
   }
 
   function renderBoardTopbar(board) {
@@ -424,54 +461,98 @@
     const heading = document.createElement('div');
     heading.className = 'board-heading';
 
-    const back = document.createElement('button');
-    back.className = 'back-btn';
-    back.innerHTML = '←';
-    back.setAttribute('aria-label', 'Back to all layouts');
-    back.addEventListener('click', goHome);
-    heading.appendChild(back);
+    const brandRow = document.createElement('div');
+    brandRow.className = 'board-brand-row';
 
-    const headingCopy = document.createElement('div');
-    headingCopy.className = 'board-heading-copy';
+    // Menu flyout: houses "Grid settings", "Change link" (for whichever
+    // slot is currently expanded) and "Grid Layouts". Sits to
+    // the left of the brand icon.
+    const menuWrap = document.createElement('div');
+    menuWrap.className = 'board-menu-wrap';
 
-    const appName = document.createElement('div');
-    appName.className = 'board-app-name';
-    appName.textContent = 'Link Layouts';
-    headingCopy.appendChild(appName);
+    const menuBtn = document.createElement('button');
+    menuBtn.type = 'button';
+    menuBtn.className = 'board-menu-btn';
+    menuBtn.innerHTML = '☰';
+    menuBtn.setAttribute('aria-label', 'Open menu');
+    menuBtn.setAttribute('aria-expanded', 'false');
+    menuBtn.title = 'Menu';
 
-    const nameInput = document.createElement('input');
-    nameInput.className = 'board-title-input';
-    nameInput.value = board.name;
-    nameInput.setAttribute('aria-label', 'Layout name');
-    nameInput.addEventListener('change', () => {
-      const value = nameInput.value.trim();
-      const finalName = value || board.name;
-      nameInput.value = finalName;
-      storage.renameBoard(board, finalName);
+    const menuPanel = document.createElement('div');
+    menuPanel.className = 'board-menu-panel';
+
+    function closeMenu() {
+      menuWrap.classList.remove('open');
+      menuBtn.setAttribute('aria-expanded', 'false');
+      if (activeMenuWrap === menuWrap) activeMenuWrap = null;
+    }
+
+    menuBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const isOpen = menuWrap.classList.toggle('open');
+      menuBtn.setAttribute('aria-expanded', String(isOpen));
+      activeMenuWrap = isOpen ? menuWrap : null;
     });
-    nameInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') nameInput.blur();
+
+    const settingsItem = document.createElement('button');
+    settingsItem.type = 'button';
+    settingsItem.className = 'board-menu-item';
+    settingsItem.innerHTML = '<span class="board-menu-item-icon">⚙</span><span>grid setting</span>';
+    settingsItem.addEventListener('click', (event) => {
+      event.stopPropagation();
+      closeMenu();
+      openGridSettings(board);
     });
-    headingCopy.appendChild(nameInput);
-    heading.appendChild(headingCopy);
+
+    const changeLinkItem = document.createElement('button');
+    changeLinkItem.type = 'button';
+    changeLinkItem.className = 'board-menu-item';
+    changeLinkItem.innerHTML = '<span class="board-menu-item-icon">🔗</span><span>Change link</span>';
+    changeLinkItem.addEventListener('click', (event) => {
+      event.stopPropagation();
+      closeMenu();
+      const currentIndex = expandedByBoard[board.id];
+      if (Number.isInteger(currentIndex)) openSettings(board, currentIndex);
+    });
+
+    const returnItem = document.createElement('button');
+    returnItem.type = 'button';
+    returnItem.className = 'board-menu-item';
+    returnItem.innerHTML = '<span class="board-menu-item-icon">⌂</span><span>Grid Layouts</span>';
+    returnItem.addEventListener('click', (event) => {
+      event.stopPropagation();
+      closeMenu();
+      goHome();
+    });
+
+    menuPanel.appendChild(settingsItem);
+    menuPanel.appendChild(changeLinkItem);
+    menuPanel.appendChild(returnItem);
+    menuWrap.appendChild(menuBtn);
+    menuWrap.appendChild(menuPanel);
+    brandRow.appendChild(menuWrap);
+
+    brandRow.appendChild(buildBrand());
+
+    const nameDisplay = document.createElement('div');
+    nameDisplay.className = 'board-title-display';
+    nameDisplay.textContent = board.name;
+    nameDisplay.setAttribute('title', 'Rename from grid setting');
+    brandRow.appendChild(nameDisplay);
+
+    heading.appendChild(brandRow);
+
     topbarEl.appendChild(heading);
 
     const actions = document.createElement('div');
     actions.className = 'board-actions';
     topbarEl.appendChild(actions);
 
-    const settingsBtn = document.createElement('button');
-    settingsBtn.type = 'button';
-    settingsBtn.className = 'toolbar-icon-btn grid-settings-btn';
-    settingsBtn.textContent = '⚙';
-    settingsBtn.setAttribute('aria-label', 'Change grid settings');
-    settingsBtn.title = 'Grid settings';
-    settingsBtn.addEventListener('click', () => openGridSettings(board));
-    actions.appendChild(settingsBtn);
+    actions.appendChild(buildLiveClock());
 
-    const settingsDivider = document.createElement('span');
-    settingsDivider.className = 'toolbar-divider';
-    actions.appendChild(settingsDivider);
+    const clockDivider = document.createElement('span');
+    clockDivider.className = 'toolbar-divider';
+    actions.appendChild(clockDivider);
 
     const fullscreenBtn = document.createElement('button');
     fullscreenBtn.type = 'button';
@@ -486,22 +567,6 @@
     fullscreenDivider.className = 'toolbar-divider';
     actions.appendChild(fullscreenDivider);
 
-    const deleteBoardBtn = document.createElement('button');
-    deleteBoardBtn.type = 'button';
-    deleteBoardBtn.className = 'toolbar-icon-btn delete-board-btn';
-    deleteBoardBtn.textContent = '✕';
-    deleteBoardBtn.setAttribute('aria-label', 'Delete layout');
-    deleteBoardBtn.title = 'Delete layout';
-    deleteBoardBtn.addEventListener('click', () => {
-      storage.deleteBoard(board);
-      goHome();
-    });
-    actions.appendChild(deleteBoardBtn);
-
-    const deleteDivider = document.createElement('span');
-    deleteDivider.className = 'toolbar-divider';
-    actions.appendChild(deleteDivider);
-
     const graphOnlyBtn = document.createElement('button');
     graphOnlyBtn.type = 'button';
     graphOnlyBtn.className = 'toolbar-icon-btn graph-only-btn';
@@ -510,6 +575,34 @@
     graphOnlyBtn.title = 'Graph only';
     graphOnlyBtn.addEventListener('click', toggleGraphOnly);
     actions.appendChild(graphOnlyBtn);
+
+    const graphOnlyDivider = document.createElement('span');
+    graphOnlyDivider.className = 'toolbar-divider';
+    actions.appendChild(graphOnlyDivider);
+
+    const deleteBoardBtn = document.createElement('button');
+    deleteBoardBtn.type = 'button';
+    deleteBoardBtn.className = 'toolbar-icon-btn delete-board-btn';
+    deleteBoardBtn.textContent = '✕';
+    deleteBoardBtn.setAttribute('aria-label', 'Delete layout');
+    deleteBoardBtn.title = 'Delete layout';
+    deleteBoardBtn.addEventListener('click', async () => {
+      const linkTotal = linkCount(board);
+      const warning = linkTotal
+        ? 'This will permanently remove ' + linkTotal + ' link' + (linkTotal === 1 ? '' : 's') + '. This cannot be undone.'
+        : 'This cannot be undone.';
+
+      const confirmed = await openConfirmDialog({
+        title: 'Delete "' + board.name + '"?',
+        message: warning,
+        confirmLabel: 'Delete',
+      });
+      if (!confirmed) return;
+
+      storage.deleteBoard(board);
+      goHome();
+    });
+    actions.appendChild(deleteBoardBtn);
   }
 
   function toggleFullscreen() {
@@ -523,6 +616,44 @@
     }
   }
 
+  // Auto-hides the bottom (⛶) button after a few seconds of no mouse
+  // activity — in the normal windowed view, in real browser full screen,
+  // and in Graph Only mode alike. Moving the mouse brings it back and
+  // restarts the idle countdown.
+  let fsIdleHideTimer = null;
+
+  function clearFsIdleHideTimer() {
+    if (fsIdleHideTimer) {
+      clearTimeout(fsIdleHideTimer);
+      fsIdleHideTimer = null;
+    }
+  }
+
+  function showFullscreenGridBtn() {
+    document.querySelectorAll('.fullscreen-grid-btn').forEach((button) => {
+      button.classList.remove('idle-hide');
+    });
+  }
+
+  function scheduleFullscreenGridBtnHide() {
+    clearFsIdleHideTimer();
+    fsIdleHideTimer = setTimeout(() => {
+      document.querySelectorAll('.fullscreen-grid-btn').forEach((button) => {
+        button.classList.add('idle-hide');
+      });
+    }, 3000);
+  }
+
+  document.addEventListener('mousemove', () => {
+    showFullscreenGridBtn();
+    scheduleFullscreenGridBtnHide();
+  });
+
+  document.addEventListener('fullscreenchange', () => {
+    showFullscreenGridBtn();
+    scheduleFullscreenGridBtnHide();
+  });
+
   function toggleGraphOnly() {
     const enabled = document.body.classList.toggle('graph-only-mode');
 
@@ -531,6 +662,9 @@
       button.setAttribute('aria-label', enabled ? 'Show dashboard controls' : 'Hide dashboard controls');
       button.title = enabled ? 'Show controls' : 'Graph only';
     });
+
+    showFullscreenGridBtn();
+    scheduleFullscreenGridBtnHide();
   }
 
   function renderBoardContent(board) {
@@ -575,6 +709,31 @@
     });
 
     contentEl.appendChild(grid);
+    showFullscreenGridBtn();
+    scheduleFullscreenGridBtnHide();
+  }
+
+  function buildBoardFooter() {
+    const footer = document.createElement('div');
+    footer.className = 'board-footer';
+
+    const left = document.createElement('div');
+    left.className = 'board-footer-left';
+    left.textContent = 'RTdbX Traceability Web Application © 2025 Tsukiden Electronics Philippines, Inc.';
+    footer.appendChild(left);
+
+    const right = document.createElement('div');
+    right.className = 'board-footer-right';
+
+    const emailLink = document.createElement('a');
+    emailLink.href = 'mailto:engg-sysdev@tsukiden-ph.com';
+    emailLink.textContent = 'engg-sysdev@tsukiden-ph.com';
+    right.appendChild(emailLink);
+
+    right.appendChild(document.createTextNode(' | Local: 134/115'));
+    footer.appendChild(right);
+
+    return footer;
   }
 
   function buildCell(board, index) {
@@ -587,56 +746,17 @@
     topbar.className = 'cell-topbar';
 
     if (slot) {
-      const label = document.createElement('div');
-      label.className = 'slot-label';
-      label.textContent = slot.label || domainOf(slot.url);
-      topbar.appendChild(label);
-
-      // Link editor: only visible while the slot is zoomed in (see CSS).
-      const linkEdit = document.createElement('div');
-      linkEdit.className = 'link-edit';
-
-      const linkInput = document.createElement('input');
-      linkInput.className = 'link-edit-input';
-      linkInput.value = slot.url;
-      linkInput.placeholder = 'Paste a new link';
-      linkInput.setAttribute('aria-label', 'Link for slot ' + (index + 1));
-
-      const applyLink = () => {
-        const url = normalizeUrl(linkInput.value);
-        if (!url) {
-          linkInput.value = slot.url;
-          return;
-        }
-        if (url === slot.url) return;
-        storage.saveSlot(board, index, { label: slot.label || '', url });
-      };
-
-      linkInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') applyLink();
-        if (event.key === 'Escape') {
-          linkInput.value = slot.url;
-          linkInput.blur();
-        }
-      });
-      linkEdit.appendChild(linkInput);
-
-      const goBtn = document.createElement('button');
-      goBtn.type = 'button';
-      goBtn.className = 'link-edit-btn';
-      goBtn.textContent = 'Go';
-      goBtn.setAttribute('aria-label', 'Load this link');
-      goBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        applyLink();
-      });
-      linkEdit.appendChild(goBtn);
-      topbar.appendChild(linkEdit);
+      if (slot.label) {
+        const label = document.createElement('div');
+        label.className = 'slot-label';
+        label.textContent = slot.label;
+        topbar.appendChild(label);
+      }
 
       const isExpanded = expandedByBoard[board.id] === index;
       const expandBtn = document.createElement('button');
       expandBtn.className = 'expand-btn';
-      expandBtn.textContent = isExpanded ? '↓' : '↗';
+      expandBtn.textContent = isExpanded ? '↙' : '↗';
       expandBtn.setAttribute('aria-label', (isExpanded ? 'Collapse slot ' : 'Expand slot ') + (index + 1));
       expandBtn.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -651,14 +771,6 @@
     }
 
     cell.appendChild(topbar);
-
-    if (slot) {
-      cell.addEventListener('click', (event) => {
-        if (event.target.closest('.cell-topbar') && !event.target.closest('button, input, .link-edit')) {
-          openSettings(board, index);
-        }
-      });
-    }
 
     const viewport = document.createElement('div');
     viewport.className = 'cell-viewport';
@@ -682,16 +794,6 @@
         const observer = new ResizeObserver(resizeMonitor);
         observer.observe(viewport);
       }
-
-      const collapseBtn = document.createElement('button');
-      collapseBtn.className = 'collapse-btn';
-      collapseBtn.innerHTML = '✕';
-      collapseBtn.setAttribute('aria-label', 'Collapse back to layout');
-      collapseBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        toggleExpand(board, index);
-      });
-      viewport.appendChild(collapseBtn);
     } else {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
@@ -735,8 +837,18 @@
     modal.className = 'settings-modal';
 
     const heading = document.createElement('h3');
-    heading.textContent = 'Grid settings';
+    heading.textContent = 'grid setting';
     modal.appendChild(heading);
+
+    const nameLabel = document.createElement('div');
+    nameLabel.className = 'settings-field-label';
+    nameLabel.textContent = 'Layout name';
+    modal.appendChild(nameLabel);
+
+    const nameInput = document.createElement('input');
+    nameInput.value = board.name;
+    nameInput.setAttribute('aria-label', 'Layout name');
+    modal.appendChild(nameInput);
 
     const countLabel = document.createElement('div');
     countLabel.className = 'settings-field-label';
@@ -790,14 +902,24 @@
     const saveBtn = document.createElement('button');
     saveBtn.className = 'save';
     saveBtn.textContent = 'Apply';
-    saveBtn.addEventListener('click', () => {
+    saveBtn.addEventListener('click', async () => {
       const slotCount = modeSelect.value === 'solo'
         ? 1
         : Math.min(20, Math.max(1, Number.parseInt(countInput.value, 10) || board.slots.length));
       const removedLinks = board.slots.slice(slotCount).filter(Boolean).length;
 
-      if (removedLinks && !window.confirm('Reducing the grid will remove ' + removedLinks + ' link' + (removedLinks === 1 ? '' : 's') + '. Continue?')) {
-        return;
+      if (removedLinks) {
+        const confirmed = await openConfirmDialog({
+          title: 'Reduce the grid?',
+          message: 'This will remove ' + removedLinks + ' link' + (removedLinks === 1 ? '' : 's') + '. This cannot be undone.',
+          confirmLabel: 'Reduce',
+        });
+        if (!confirmed) return;
+      }
+
+      const newName = nameInput.value.trim();
+      if (newName && newName !== board.name) {
+        storage.renameBoard(board, newName);
       }
 
       storage.resizeBoard(board, slotCount, modeSelect.value);
@@ -808,11 +930,68 @@
     modal.appendChild(row);
     backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
-    countInput.focus();
+    nameInput.focus();
+    nameInput.select();
 
     function close() {
       if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
     }
+  }
+
+  // In-app confirmation dialog, styled the same as the settings/notify
+  // modals used elsewhere (add link, grid setting) instead of the
+  // browser's native window.confirm() popup.
+  function openConfirmDialog({ title, message, confirmLabel }) {
+    return new Promise((resolve) => {
+      const backdrop = document.createElement('div');
+      backdrop.className = 'settings-backdrop';
+      backdrop.addEventListener('click', (event) => {
+        if (event.target === backdrop) finish(false);
+      });
+
+      const modal = document.createElement('div');
+      modal.className = 'settings-modal';
+
+      const heading = document.createElement('h3');
+      heading.textContent = title || 'Are you sure?';
+      modal.appendChild(heading);
+
+      const body = document.createElement('div');
+      body.className = 'settings-message';
+      body.textContent = message || '';
+      modal.appendChild(body);
+
+      const row = document.createElement('div');
+      row.className = 'settings-row-buttons';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', () => finish(false));
+      row.appendChild(cancelBtn);
+
+      const confirmBtn = document.createElement('button');
+      confirmBtn.className = 'danger';
+      confirmBtn.textContent = confirmLabel || 'Confirm';
+      confirmBtn.addEventListener('click', () => finish(true));
+      row.appendChild(confirmBtn);
+
+      modal.appendChild(row);
+      backdrop.appendChild(modal);
+      document.body.appendChild(backdrop);
+      confirmBtn.focus();
+
+      document.addEventListener('keydown', onKeydown);
+
+      function onKeydown(event) {
+        if (event.key === 'Escape') finish(false);
+      }
+
+      function finish(result) {
+        document.removeEventListener('keydown', onKeydown);
+        if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+        resolve(result);
+      }
+    });
   }
 
   function toggleExpand(board, index) {
@@ -828,7 +1007,7 @@
 
       const expandBtn = cell.querySelector('.expand-btn');
       if (expandBtn) {
-        expandBtn.textContent = isExpanded ? '↓' : '↗';
+        expandBtn.textContent = isExpanded ? '↙' : '↗';
         expandBtn.setAttribute('aria-label', (isExpanded ? 'Collapse slot ' : 'Expand slot ') + (cellIndex + 1));
       }
 
@@ -941,7 +1120,7 @@
     const countInput = document.createElement('input');
     countInput.type = 'number';
     countInput.min = '1';
-    countInput.max = '20';
+    countInput.max = '8';
     countInput.value = '4';
     modal.appendChild(countInput);
 
@@ -1001,5 +1180,6 @@
     }
   }
 
+  startLiveClock();
   initStorage();
 })();

@@ -1,4 +1,4 @@
-// Link Layouts desktop shell: opens index.html in a window and stores
+// Monitoring Tool desktop shell: opens index.html in a window and stores
 // everything in db.sqlite, kept right inside this project folder (next to
 // main.js) rather than the OS-level userData folder. That's deliberate: it
 // lets the database travel with the project when you commit and push it to
@@ -23,12 +23,25 @@ let win;
 let pendingWrites = 0;
 let readyToClose = false;
 
-// Opens the database. If anything goes wrong (folder not writable, native
-// module missing, corrupt file...) the app still opens and tells the user,
-// instead of failing silently and losing what they type.
+const fs = require('fs');
+
+function getDbPath() {
+  // Running from source (npm start): keep it in the project folder (git-friendly)
+  if (!app.isPackaged) return path.join(__dirname, 'db.sqlite');
+
+  // Portable .exe: store the data next to the .exe so it travels with it
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    return path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'LinkLayouts-data', 'db.sqlite');
+  }
+
+  // Installer build: the normal per-user app data folder
+  return path.join(app.getPath('userData'), 'db.sqlite');
+}
+
 function openStore() {
   try {
-    dbFile = path.join(__dirname, 'db.sqlite');
+    dbFile = getDbPath();
+    fs.mkdirSync(path.dirname(dbFile), { recursive: true });
 
     const { openDatabase } = require('./db');
     store = openDatabase(dbFile);

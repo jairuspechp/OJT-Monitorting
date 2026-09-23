@@ -1,5 +1,5 @@
 {
-  "name": "link-layouts",
+  "name": "Monitoring-Tool",
   "productName": "Link Layouts",
   "version": "2.1.0",
   "description": "Link Layouts dashboard with a local SQLite database",
@@ -20,8 +20,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.linklayouts.app",
-    "productName": "Link Layouts",
+    "appId": "com.monitoringtool.app",
+    "productName": "Monitoring Tool",
     "npmRebuild": false,
     "files": [
       "main.js",
@@ -31,19 +31,15 @@
       "app.js",
       "style.css",
       "package.json",
-      "icon.ico"
-    ],
-    "asarUnpack": [
-      "**/node_modules/better-sqlite3/**"
+      "RTdbX.ico",
+      "RTdbX.png"
     ],
     "win": {
-      "target": [
-        "portable"
-      ],
+      "target": ["portable"],
       "icon": "RTdbX.ico"
     },
     "portable": {
-      "artifactName": "Link-Layouts.exe"
+      "artifactName": "Monitoring-Tool.exe"
     }
   }
 }

@@ -1,12 +1,14 @@
 // SQLite storage for Link Layouts (runs in Electron's main process).
-const Database = require('better-sqlite3');
+// Uses Node's built-in node:sqlite instead of better-sqlite3, so there's
+// no native module to compile (no Python / Visual Studio build step needed).
+const { DatabaseSync } = require('node:sqlite');
 
 const MODES = ['standard', 'horizontal', 'solo', 'three'];
 const clampCount = (n) => Math.min(20, Math.max(1, Number.parseInt(n, 10) || 4));
 
 function openDatabase(file) {
-  const db = new Database(file);
-  db.pragma('foreign_keys = ON');
+  const db = new DatabaseSync(file);
+  db.exec('PRAGMA foreign_keys = ON');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS boards (
@@ -40,10 +42,19 @@ function openDatabase(file) {
     clearSlot: db.prepare('DELETE FROM slots WHERE board_id = ? AND slot_index = ?'),
   };
 
-  const applyLayout = db.transaction((id, count, mode) => {
-    q.setLayout.run(count, mode, id);
-    q.trimSlots.run(id, count);
-  });
+  // node:sqlite has no built-in db.transaction() helper like better-sqlite3,
+  // so the BEGIN/COMMIT/ROLLBACK is done by hand here.
+  function applyLayout(id, count, mode) {
+    db.exec('BEGIN');
+    try {
+      q.setLayout.run(count, mode, id);
+      q.trimSlots.run(id, count);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
 
   return {
     listBoards() {

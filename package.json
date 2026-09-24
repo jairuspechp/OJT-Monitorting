@@ -40,6 +40,10 @@
     },
     "portable": {
       "artifactName": "Monitoring-Tool.exe"
-    }
+    },
+    "extraResources": [
+      { "from": "Db.sqlite", "to": "seed.sqlite" }
+    ]
   }
+  
 }

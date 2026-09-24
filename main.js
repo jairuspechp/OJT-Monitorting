@@ -43,6 +43,12 @@ function openStore() {
     dbFile = getDbPath();
     fs.mkdirSync(path.dirname(dbFile), { recursive: true });
 
+     // First run only: start from the bundled seed if there's no database yet
+    const seed = path.join(process.resourcesPath, 'seed.sqlite');
+    if (app.isPackaged && !fs.existsSync(dbFile) && fs.existsSync(seed)) {
+      fs.copyFileSync(seed, dbFile);
+    }
+
     const { openDatabase } = require('./db');
     store = openDatabase(dbFile);
     console.log('Link Layouts: database ready at', dbFile);

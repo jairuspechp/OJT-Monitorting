@@ -1070,6 +1070,8 @@
   // ----------------------------------------------------------------------
   // E: expand / collapse a link (same as the arrow button on its holder).
   // Collapses the expanded slot, otherwise expands the slot under the mouse.
+  // If the mouse is over an empty slot, tell the user there's no link and
+  // let them add one on the spot.
   // ----------------------------------------------------------------------
 
   let hoveredSlotIndex = null;
@@ -1093,6 +1095,12 @@
       index = expandedIndex;
     } else if (hoveredSlotIndex !== null && board.slots[hoveredSlotIndex]) {
       index = hoveredSlotIndex;
+    } else if (hoveredSlotIndex !== null && !board.slots[hoveredSlotIndex]) {
+      // Hovering an empty slot: nothing to expand, so say so and offer to add a link.
+      event.preventDefault();
+      showHint('<b>' + escapeHtml(slotName(board, hoveredSlotIndex)) + '</b> has no link yet &mdash; add one');
+      openSettings(board, hoveredSlotIndex);
+      return;
     } else {
       showHint('Point at a link and press <kbd>E</kbd> to expand it');
       return;

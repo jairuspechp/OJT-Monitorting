@@ -74,42 +74,73 @@
     return state.boards.find((board) => board.id === id) || null;
   }
 
-  // ----------------------------------------------------------------------
-  // SQLite storage. The database lives in a file on disk, managed by the
-  // desktop shell (main.js) and reached through window.linkDB (preload.js).
-  // ----------------------------------------------------------------------
-
-  const db = window.linkDB;
-
-  // The UI is updated first; the write happens right after. A failure is
-  // logged to devtools console only (no on-screen banner).
-  function save(task) {
-    return Promise.resolve()
-      .then(task)
-      .catch((error) => {
-        console.error('Link Layouts: could not save to the database.', error);
-      });
+  // What to call a link in messages: its title when it has one, else "Slot N".
+  function slotName(board, index) {
+    const slot = board && board.slots[index];
+    return slot && slot.label ? slot.label : 'Slot ' + (index + 1);
   }
 
-  async function initStorage() {
-    readNav();
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[ch]));
+  }
 
+  // ----------------------------------------------------------------------
+  // Browser storage. Every layout and link is saved in the browser's
+  // localStorage, so the UI comes back exactly as you left it next time you
+  // open the page. It stays until the browser's site data is cleared.
+  // ----------------------------------------------------------------------
+
+  const BOARDS_KEY = 'link-grid-boards-v1';
+  const MODES = ['standard', 'horizontal', 'solo', 'three'];
+
+  // Ask the browser not to evict this site's data when disk space is low.
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
+
+  function loadBoards() {
     try {
-      const status = await db.status();
-      if (!status || !status.ok) {
-        console.error('Link Layouts: database status not ok.', (status && status.error) || 'the database file could not be opened');
-      }
+      const raw = localStorage.getItem(BOARDS_KEY);
+      if (!raw) return [];
 
-      state.boards = await db.listBoards();
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
 
-      if (!state.boards.length) {
-        const board = blankBoard('Layout 1');
-        state.boards.push(board);
-        await db.createBoard({ id: board.id, name: board.name, slotCount: 4, layoutMode: board.layoutMode });
-      }
+      return parsed
+        .filter((board) => board && typeof board.id === 'string')
+        .map((board) => ({
+          id: board.id,
+          name: String(board.name || 'Untitled'),
+          layoutMode: MODES.includes(board.layoutMode) ? board.layoutMode : 'standard',
+          description: board.description || '',
+          slots: Array.isArray(board.slots)
+            ? board.slots.map((s) => (s && s.url ? { label: s.label || '', url: s.url } : null))
+            : [null, null, null, null],
+        }));
     } catch (error) {
-      console.error('Link Layouts: could not open the database.', error);
-      state.boards = [blankBoard('Layout 1')];
+      console.error('Link Layouts: saved layouts could not be read.', error);
+      return [];
+    }
+  }
+
+  // Writes the whole list of boards. Called after every change.
+  function persist() {
+    try {
+      localStorage.setItem(BOARDS_KEY, JSON.stringify(state.boards));
+    } catch (error) {
+      console.error('Link Layouts: could not save to browser storage.', error);
+    }
+  }
+
+  function initStorage() {
+    readNav();
+    state.boards = loadBoards();
+
+    if (!state.boards.length) {
+      state.boards.push(blankBoard('Layout 1'));
+      persist();
     }
 
     state.loaded = true;
@@ -120,13 +151,7 @@
     createBoard(name, slotCount, layoutMode, description) {
       const board = blankBoard(name, slotCount, layoutMode, description);
       state.boards.push(board);
-      save(() => db.createBoard({
-        id: board.id,
-        name: board.name,
-        slotCount: board.slots.length,
-        layoutMode: board.layoutMode,
-        description: board.description,
-      }));
+      persist();
 
       render();
       return Promise.resolve(board.id);
@@ -134,18 +159,16 @@
 
     renameBoard(board, name) {
       board.name = name;
-      save(() => db.renameBoard(board.id, name));
+      persist();
     },
 
     deleteBoard(board) {
       state.boards = state.boards.filter((item) => item.id !== board.id);
-      save(() => db.deleteBoard(board.id));
 
       if (!state.boards.length) {
-        const fresh = blankBoard('Layout 1');
-        state.boards.push(fresh);
-        save(() => db.createBoard({ id: fresh.id, name: fresh.name, slotCount: 4, layoutMode: fresh.layoutMode }));
+        state.boards.push(blankBoard('Layout 1'));
       }
+      persist();
     },
 
     resizeBoard(board, slotCount, layoutMode) {
@@ -155,7 +178,7 @@
       board.slots = newSlots;
       board.layoutMode = layoutMode;
       expandedByBoard[board.id] = null;
-      save(() => db.setLayout(board.id, slotCount, layoutMode));
+      persist();
 
       render();
     },
@@ -164,12 +187,7 @@
       const newSlots = board.slots.slice();
       newSlots[index] = dataOrNull;
       board.slots = newSlots;
-
-      if (dataOrNull) {
-        save(() => db.saveSlot(board.id, index, { label: dataOrNull.label || '', url: dataOrNull.url }));
-      } else {
-        save(() => db.clearSlot(board.id, index));
-      }
+      persist();
 
       if (state.currentBoardId === board.id) {
         refreshCell(board, index);
@@ -338,7 +356,7 @@
     const status = document.createElement('div');
     status.className = 'db-status-btn db-status-ok';
     status.textContent = '💾';
-    status.title = 'Saved on this computer — your links are stored in a local SQLite file, not in the browser';
+    status.title = 'Saved in this browser — your layouts stay until the browser\'s site data is cleared';
     topbarEl.appendChild(status);
   }
 
@@ -511,7 +529,11 @@
     changeLinkItem.addEventListener('click', (event) => {
       event.stopPropagation();
       closeMenu();
-      const currentIndex = expandedByBoard[board.id];
+      // The expanded slot, else the slot that was under the mouse when the
+      // menu was opened with Tab.
+      const currentIndex = Number.isInteger(expandedByBoard[board.id])
+        ? expandedByBoard[board.id]
+        : menuChangeIndex;
       if (Number.isInteger(currentIndex)) openSettings(board, currentIndex);
     });
 
@@ -525,9 +547,24 @@
       goHome();
     });
 
+    // Extra entries (same look as the items above).
+    function extraItem(icon, text, run) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'board-menu-item';
+      item.innerHTML = '<span class="board-menu-item-icon">' + icon + '</span><span>' + text + '</span>';
+      item.addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeMenu();
+        run();
+      });
+      return item;
+    }
+
     menuPanel.appendChild(settingsItem);
     menuPanel.appendChild(changeLinkItem);
     menuPanel.appendChild(returnItem);
+    menuPanel.appendChild(extraItem('\u2328', 'Shortcut keys', openShortcutsDialog));
     menuWrap.appendChild(menuBtn);
     menuWrap.appendChild(menuPanel);
     brandRow.appendChild(menuWrap);
@@ -558,8 +595,8 @@
     fullscreenBtn.type = 'button';
     fullscreenBtn.className = 'toolbar-icon-btn fullscreen-btn';
     fullscreenBtn.textContent = '⛶';
-    fullscreenBtn.setAttribute('aria-label', 'Enter full screen');
-    fullscreenBtn.title = 'Enter full screen';
+    fullscreenBtn.setAttribute('aria-label', 'Toggle full screen');
+    fullscreenBtn.title = 'Toggle full screen (F)';
     fullscreenBtn.addEventListener('click', toggleFullscreen);
     actions.appendChild(fullscreenBtn);
 
@@ -572,7 +609,7 @@
     graphOnlyBtn.className = 'toolbar-icon-btn graph-only-btn';
     graphOnlyBtn.textContent = '▣';
     graphOnlyBtn.setAttribute('aria-label', 'Hide dashboard controls');
-    graphOnlyBtn.title = 'Graph only';
+    graphOnlyBtn.title = 'Graph only (G)';
     graphOnlyBtn.addEventListener('click', toggleGraphOnly);
     actions.appendChild(graphOnlyBtn);
 
@@ -654,17 +691,443 @@
     scheduleFullscreenGridBtnHide();
   });
 
+  // ----------------------------------------------------------------------
+  // Full-screen shortcut + exit instructions.
+  //   F            - enter / leave full screen (ignored while typing)
+  //   Esc          - leaves full screen (handled by the browser itself)
+  // A short hint appears whenever the page goes full screen, including
+  // F11 and kiosk mode, telling the user how to get out.
+  // ----------------------------------------------------------------------
+
+  const fsHintStyle = document.createElement('style');
+  fsHintStyle.textContent = [
+    '.fs-hint{position:fixed;top:16px;left:50%;transform:translate(-50%,-8px);',
+    'z-index:2147483000;padding:10px 18px;border-radius:10px;',
+    'background:rgba(15,17,21,.92);color:#fff;font:600 14px/1.3 system-ui,sans-serif;',
+    'border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 24px rgba(0,0,0,.45);',
+    'opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;white-space:nowrap}',
+    '.fs-hint.show{opacity:1;transform:translate(-50%,0)}',
+    '.fs-hint kbd{display:inline-block;padding:1px 7px;margin:0 2px;border-radius:5px;',
+    'background:#fff;color:#0f1115;font:700 12px/1.6 system-ui,sans-serif}',
+  ].join('');
+  document.head.appendChild(fsHintStyle);
+
+  const fsHintEl = document.createElement('div');
+  fsHintEl.className = 'fs-hint';
+  fsHintEl.setAttribute('role', 'status');
+  document.body.appendChild(fsHintEl);
+
+  let fsHintTimer = null;
+
+  function isFullScreenNow() {
+    return Boolean(document.fullscreenElement) ||
+      (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches);
+  }
+
+  function showHint(html) {
+    fsHintEl.innerHTML = html;
+    fsHintEl.classList.add('show');
+    clearTimeout(fsHintTimer);
+    fsHintTimer = setTimeout(() => fsHintEl.classList.remove('show'), 6000);
+  }
+
+  function showFullscreenHint() {
+    // Entered through the button / F key: Esc or F leaves.
+    // Entered through F11 or --kiosk: F11 leaves (kiosk: Alt+F4 closes).
+    showHint(document.fullscreenElement
+      ? 'Full screen &mdash; press <kbd>Esc</kbd> or <kbd>F</kbd> to exit'
+      : 'Full screen &mdash; press <kbd>F11</kbd> to exit &middot; <kbd>Esc</kbd> closes the app');
+  }
+
+  function hideFullscreenHint() {
+    clearTimeout(fsHintTimer);
+    fsHintEl.classList.remove('show');
+  }
+
+  function onFullscreenStateChange() {
+    if (isFullScreenNow()) showFullscreenHint();
+    else hideFullscreenHint();
+  }
+
+  document.addEventListener('fullscreenchange', onFullscreenStateChange);
+
+  if (window.matchMedia) {
+    const displayModeQuery = window.matchMedia('(display-mode: fullscreen)');
+    if (displayModeQuery.addEventListener) {
+      displayModeQuery.addEventListener('change', onFullscreenStateChange);
+    }
+  }
+
+  // Already full screen when the page opens (kiosk launch).
+  if (isFullScreenNow()) showFullscreenHint();
+
+  // True when the pressed key is this letter, on any keyboard layout.
+  function isKey(event, letter) {
+    return event.key.toLowerCase() === letter || event.code === 'Key' + letter.toUpperCase();
+  }
+
+  document.addEventListener('keydown', (event) => {
+    const key = isKey(event, 'f') ? 'f' : isKey(event, 'g') ? 'g' : '';
+    if (!key) return;
+    if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+
+    const target = event.target;
+    const tag = target && target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target && target.isContentEditable)) return;
+    if (document.querySelector('.settings-backdrop')) return; // a dialog is open
+
+    if (key === 'f') {
+      event.preventDefault();
+      toggleFullscreen();
+      return;
+    }
+
+    // G: graph only. Only meaningful while a layout is open (or to leave
+    // graph-only mode if it is already on).
+    const inBoard = contentEl.classList.contains('mode-board');
+    if (inBoard || document.body.classList.contains('graph-only-mode')) {
+      event.preventDefault();
+      toggleGraphOnly();
+    }
+  });
+
+  // ----------------------------------------------------------------------
+  // Tab: open / close the existing ☰ menu (the one in the layout toolbar).
+  // The toolbar is normally hidden, so it is shown as an overlay while the
+  // menu is open (also in graph-only mode). Up / Down move between items,
+  // Enter picks one, Tab or Esc closes it.
+  // ----------------------------------------------------------------------
+
+  const menuShortcutStyle = document.createElement('style');
+  menuShortcutStyle.textContent = [
+    /* toolbar shown as an overlay while the menu is open */
+    '.topbar.board-toolbar.menu-peek,body.graph-only-mode #topbar.menu-peek{display:flex !important;',
+    'position:fixed;top:0;left:0;right:0;z-index:9500;box-shadow:0 10px 30px rgba(0,0,0,.5)}',
+
+    /* shortcut keys dialog */
+    '.shortcut-list{display:grid;grid-template-columns:auto 1fr;gap:12px 18px;align-items:center;margin:10px 0 14px;text-align:left}',
+    '.shortcut-list .sc-keys{white-space:nowrap}',
+    '.shortcut-list kbd{display:inline-block;min-width:26px;padding:3px 9px;border-radius:6px;background:#fff;',
+    'color:#0f1115;font:700 12px/1.4 system-ui,sans-serif;text-align:center;box-shadow:0 2px 0 rgba(0,0,0,.35)}',
+    '.shortcut-list .sc-plus{margin:0 4px;opacity:.7}',
+    '.shortcut-list .sc-text{font-size:14px;line-height:1.4}',
+    '.shortcuts-tip{font-size:13px;line-height:1.5;opacity:.8;margin-bottom:14px;text-align:left}',
+  ].join('');
+  document.head.appendChild(menuShortcutStyle);
+
+  let menuChangeIndex = null; // slot "Change link" applies to when opened with Tab
+
+  // When the menu closes (any way), put the toolbar back the way it was.
+  new MutationObserver((records) => {
+    const touchedMenu = records.some((r) => r.target.classList && r.target.classList.contains('board-menu-wrap'));
+    if (!touchedMenu) return;
+    if (!topbarEl.querySelector('.board-menu-wrap.open')) {
+      topbarEl.classList.remove('menu-peek');
+      menuChangeIndex = null;
+    }
+  }).observe(topbarEl, { subtree: true, attributes: true, attributeFilter: ['class'] });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+
+    // A menu left over from a previous render is not really open.
+    if (activeMenuWrap && !document.contains(activeMenuWrap)) activeMenuWrap = null;
+
+    // Up / Down move through the open menu.
+    if (activeMenuWrap && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      event.preventDefault();
+      const items = Array.from(activeMenuWrap.querySelectorAll('.board-menu-item'));
+      const at = items.indexOf(document.activeElement);
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      items[(at + step + items.length) % items.length].focus();
+      return;
+    }
+
+    if (event.key !== 'Tab') return;
+
+    const target = event.target;
+    const tag = target && target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target && target.isContentEditable)) return;
+    if (document.querySelector('.settings-backdrop')) return; // a dialog is open
+
+    // The menu lives in the layout toolbar, so it only exists on an open layout.
+    const menuBtn = topbarEl.querySelector('.board-menu-btn');
+    const board = findBoard(state.currentBoardId);
+    if (!menuBtn || !board || !contentEl.classList.contains('mode-board')) return;
+
+    event.preventDefault(); // stop Tab from moving keyboard focus around
+
+    if (activeMenuWrap) { // already open: close it
+      menuBtn.click();
+      return;
+    }
+
+    const expandedIndex = expandedByBoard[board.id];
+    menuChangeIndex = Number.isInteger(expandedIndex) ? expandedIndex : hoveredSlotIndex;
+
+    const toolbarHidden = document.body.classList.contains('graph-only-mode') || !topbarEl.classList.contains('is-visible');
+
+    menuBtn.click(); // opens the existing menu
+    if (toolbarHidden) topbarEl.classList.add('menu-peek');
+
+    const first = topbarEl.querySelector('.board-menu-item');
+    if (first) first.focus();
+  });
+
+  // Esc: exit (close the window). This is how you leave kiosk / app mode.
+  // Asks first, because Esc is easy to hit by accident: press Enter to
+  // confirm or Esc again to cancel. A page can only close its own window
+  // when the browser allows it; if it refuses, show the Alt+F4 fallback.
+  let exitDialogOpen = false;
+
+  function exitApp() {
+    window.close();
+
+    setTimeout(() => {
+      showHint('Could not close from the page &mdash; press <kbd>Alt</kbd>+<kbd>F4</kbd>');
+    }, 400);
+  }
+
+  function requestExit() {
+    if (exitDialogOpen) return;
+    exitDialogOpen = true;
+
+    openConfirmDialog({
+      title: 'Exit?',
+      message: 'Close the monitoring dashboard? Press Enter to exit or Esc to stay.',
+      confirmLabel: 'Exit',
+    }).then((confirmed) => {
+      exitDialogOpen = false;
+      if (confirmed) exitApp();
+    });
+  }
+
+  // Capture phase, so this runs before a dialog's own Esc handler removes
+  // the dialog (otherwise closing a dialog with Esc would also exit).
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
+
+    if (activeMenuWrap && document.contains(activeMenuWrap)) { // Esc closes the menu first
+      event.preventDefault();
+      const menuBtn = activeMenuWrap.querySelector('.board-menu-btn');
+      if (menuBtn) menuBtn.click();
+      return;
+    }
+
+    if (document.querySelector('.settings-backdrop')) return; // a dialog is open
+    if (document.fullscreenElement) return; // the browser uses Esc to leave full screen
+    requestExit();
+  }, true);
+
+  // ----------------------------------------------------------------------
+  // Shortcut keys list (menu item, or press ?).
+  // ----------------------------------------------------------------------
+
+  function openShortcutsDialog() {
+    if (document.querySelector('.settings-backdrop')) return;
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'settings-backdrop';
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) close();
+    });
+
+    const modal = document.createElement('div');
+    modal.className = 'settings-modal';
+
+    const heading = document.createElement('h3');
+    heading.textContent = 'Shortcut keys';
+    modal.appendChild(heading);
+
+    const rows = [
+      [['Tab'], 'Open or close this menu. Inside it, use \u2191 \u2193 and Enter.'],
+      [['E'], 'Expand or collapse the link under the mouse (or collapse the one that is expanded).'],
+      [['F'], 'Turn full screen on or off.'],
+      [['G'], 'Graph only: hide the toolbar and headings. Press again to bring them back.'],
+      [['Esc'], 'Close the menu or a window. With nothing open, it asks to exit (Enter to confirm).'],
+      [['?'], 'Show this list.'],
+      [['Alt', 'F4'], 'Close the window if Esc cannot.'],
+    ];
+
+    const list = document.createElement('div');
+    list.className = 'shortcut-list';
+    rows.forEach(([keys, text]) => {
+      const keyCell = document.createElement('div');
+      keyCell.className = 'sc-keys';
+      keys.forEach((name, i) => {
+        if (i > 0) {
+          const plus = document.createElement('span');
+          plus.className = 'sc-plus';
+          plus.textContent = '+';
+          keyCell.appendChild(plus);
+        }
+        const kbd = document.createElement('kbd');
+        kbd.textContent = name;
+        keyCell.appendChild(kbd);
+      });
+
+      const textCell = document.createElement('div');
+      textCell.className = 'sc-text';
+      textCell.textContent = text;
+
+      list.appendChild(keyCell);
+      list.appendChild(textCell);
+    });
+    modal.appendChild(list);
+
+    const tip = document.createElement('div');
+    tip.className = 'shortcuts-tip';
+    tip.textContent = 'If a key does nothing, click an empty part of the dashboard first. Keys cannot reach a ' +
+      'page while you are clicked inside it, and focus returns to the dashboard when you switch back to this tab ' +
+      'or move the mouse off a link.';
+    modal.appendChild(tip);
+
+    const row = document.createElement('div');
+    row.className = 'settings-row-buttons';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'save';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', close);
+    row.appendChild(closeBtn);
+    modal.appendChild(row);
+
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+    closeBtn.focus();
+
+    document.addEventListener('keydown', onKeydown);
+
+    function onKeydown(event) {
+      if (event.key === 'Escape') close();
+    }
+
+    function close() {
+      document.removeEventListener('keydown', onKeydown);
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+    }
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== '?' || event.ctrlKey || event.altKey || event.metaKey) return;
+
+    const target = event.target;
+    const tag = target && target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target && target.isContentEditable)) return;
+    if (document.querySelector('.settings-backdrop')) return;
+
+    event.preventDefault();
+    openShortcutsDialog();
+  });
+
+  // ----------------------------------------------------------------------
+  // Keeping the keys working.
+  // Key presses go to whatever has focus. After you click inside an embedded
+  // page, or come back to this tab, focus can still be sitting inside that
+  // page, so the shortcuts never see the key. These hand focus back to the
+  // dashboard when you click the dashboard, return to the tab, or move the
+  // mouse off a link.
+  // ----------------------------------------------------------------------
+
+  function reclaimFocus() {
+    const active = document.activeElement;
+    if (active && active.tagName === 'IFRAME') active.blur();
+  }
+
+  window.addEventListener('focus', reclaimFocus);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) reclaimFocus();
+  });
+  document.addEventListener('mousedown', reclaimFocus, true);
+
+  // Pages that share this page's origin can be reached, so their key presses
+  // are passed on to the shortcuts (except while typing in a field there).
+  function forwardFrameKeys(frame) {
+    let frameDoc = null;
+    try { frameDoc = frame.contentDocument; } catch (error) { return; }
+    if (!frameDoc) return; // other websites cannot be reached by the browser's rules
+
+    frameDoc.addEventListener('keydown', (event) => {
+      const tag = event.target && event.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (event.target && event.target.isContentEditable)) return;
+
+      const copy = new KeyboardEvent('keydown', {
+        key: event.key,
+        code: event.code,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey,
+        repeat: event.repeat,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.dispatchEvent(copy);
+      if (copy.defaultPrevented) event.preventDefault();
+    });
+  }
+
+  // ----------------------------------------------------------------------
+  // E: expand / collapse a link (same as the arrow button on its holder).
+  // Collapses the expanded slot, otherwise expands the slot under the mouse.
+  // If the mouse is over an empty slot, tell the user there's no link and
+  // let them add one on the spot.
+  // ----------------------------------------------------------------------
+
+  let hoveredSlotIndex = null;
+
+  document.addEventListener('keydown', (event) => {
+    if (!isKey(event, 'e')) return;
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+
+    const target = event.target;
+    const tag = target && target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target && target.isContentEditable)) return;
+    if (document.querySelector('.settings-backdrop')) return; // a dialog is open
+    if (!contentEl.classList.contains('mode-board')) return;
+
+    const board = findBoard(state.currentBoardId);
+    if (!board) return;
+
+    const expandedIndex = expandedByBoard[board.id];
+    let index;
+    if (Number.isInteger(expandedIndex) && board.slots[expandedIndex]) {
+      index = expandedIndex;
+    } else if (hoveredSlotIndex !== null && board.slots[hoveredSlotIndex]) {
+      index = hoveredSlotIndex;
+    } else if (hoveredSlotIndex !== null && !board.slots[hoveredSlotIndex]) {
+      // Hovering an empty slot: nothing to expand, so say so and offer to add a link.
+      event.preventDefault();
+      showHint('<b>' + escapeHtml(slotName(board, hoveredSlotIndex)) + '</b> has no link yet &mdash; add one');
+      openSettings(board, hoveredSlotIndex);
+      return;
+    } else {
+      showHint('Point at a link and press <kbd>E</kbd> to expand it');
+      return;
+    }
+
+    event.preventDefault();
+    toggleExpand(board, index);
+
+    showHint(expandedByBoard[board.id] === index
+      ? '<b>' + escapeHtml(slotName(board, index)) + '</b> expanded &mdash; press <kbd>E</kbd> to collapse'
+      : '<b>' + escapeHtml(slotName(board, index)) + '</b> collapsed');
+  });
+
   function toggleGraphOnly() {
     const enabled = document.body.classList.toggle('graph-only-mode');
 
     document.querySelectorAll('.graph-only-btn').forEach((button) => {
       button.textContent = enabled ? '↩' : '▣';
       button.setAttribute('aria-label', enabled ? 'Show dashboard controls' : 'Hide dashboard controls');
-      button.title = enabled ? 'Show controls' : 'Graph only';
+      button.title = enabled ? 'Show controls (G)' : 'Graph only (G)';
     });
 
     showFullscreenGridBtn();
     scheduleFullscreenGridBtnHide();
+
+    if (enabled) showHint('Graph only &mdash; press <kbd>G</kbd> to show the controls again');
+    else hideFullscreenHint();
   }
 
   function renderBoardContent(board) {
@@ -684,8 +1147,8 @@
     const gridFullscreenBtn = document.createElement('button');
     gridFullscreenBtn.className = 'fullscreen-grid-btn';
     gridFullscreenBtn.textContent = '⛶';
-    gridFullscreenBtn.setAttribute('aria-label', 'Enter full screen');
-    gridFullscreenBtn.title = 'Enter full screen';
+    gridFullscreenBtn.setAttribute('aria-label', 'Toggle full screen');
+    gridFullscreenBtn.title = 'Toggle full screen (F)';
     gridFullscreenBtn.addEventListener('click', toggleFullscreen);
     grid.appendChild(gridFullscreenBtn);
 
@@ -694,7 +1157,7 @@
     exitGraphOnlyBtn.className = 'exit-graph-only-btn';
     exitGraphOnlyBtn.textContent = '↩';
     exitGraphOnlyBtn.setAttribute('aria-label', 'Show dashboard controls');
-    exitGraphOnlyBtn.title = 'Show controls';
+    exitGraphOnlyBtn.title = 'Show controls (G)';
     exitGraphOnlyBtn.addEventListener('click', toggleGraphOnly);
     grid.appendChild(exitGraphOnlyBtn);
 
@@ -742,6 +1205,13 @@
     const cell = document.createElement('div');
     cell.className = 'cell' + (slot ? ' filled' : '') + (expandedByBoard[board.id] === index ? ' expanded' : '');
 
+    // Remember which slot the mouse is over (used by the E and Tab shortcuts).
+    cell.addEventListener('mouseenter', () => { hoveredSlotIndex = index; });
+    cell.addEventListener('mouseleave', () => {
+      if (hoveredSlotIndex === index) hoveredSlotIndex = null;
+      reclaimFocus(); // so the shortcut keys work again after clicking inside a page
+    });
+
     const topbar = document.createElement('div');
     topbar.className = 'cell-topbar';
 
@@ -757,7 +1227,8 @@
       const expandBtn = document.createElement('button');
       expandBtn.className = 'expand-btn';
       expandBtn.textContent = isExpanded ? '↙' : '↗';
-      expandBtn.setAttribute('aria-label', (isExpanded ? 'Collapse slot ' : 'Expand slot ') + (index + 1));
+      expandBtn.setAttribute('aria-label', (isExpanded ? 'Collapse ' : 'Expand ') + slotName(board, index));
+      expandBtn.title = (isExpanded ? 'Collapse' : 'Expand') + ' (E)';
       expandBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         toggleExpand(board, index);
@@ -789,6 +1260,7 @@
       frame.addEventListener('load', () => {
         setEmbeddedChromeHidden(frame, expandedByBoard[board.id] !== index);
         resizeMonitor();
+        forwardFrameKeys(frame);
       });
       if (typeof ResizeObserver !== 'undefined') {
         const observer = new ResizeObserver(resizeMonitor);
@@ -1008,7 +1480,8 @@
       const expandBtn = cell.querySelector('.expand-btn');
       if (expandBtn) {
         expandBtn.textContent = isExpanded ? '↙' : '↗';
-        expandBtn.setAttribute('aria-label', (isExpanded ? 'Collapse slot ' : 'Expand slot ') + (cellIndex + 1));
+        expandBtn.setAttribute('aria-label', (isExpanded ? 'Collapse ' : 'Expand ') + slotName(board, cellIndex));
+        expandBtn.title = (isExpanded ? 'Collapse' : 'Expand') + ' (E)';
       }
 
       const frame = cell.querySelector('.live-frame');
@@ -1028,7 +1501,7 @@
     modal.className = 'settings-modal';
 
     const heading = document.createElement('h3');
-    heading.textContent = (slot ? 'Edit link' : 'Add link') + ' - slot ' + (index + 1);
+    heading.textContent = (slot ? 'Edit link' : 'Add link') + ' - ' + slotName(board, index);
     modal.appendChild(heading);
 
     const urlLabel = document.createElement('div');
